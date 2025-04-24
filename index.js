@@ -8,7 +8,6 @@ const clearButton = document.getElementById("header-button");
 const newChatButton = document.getElementById("new-chat");
 
 // Configuração da API
-const API_KEY = "AIzaSyDO_szooXZ1TICoMmlgYGYz8Un9N8shQao";
 const genAI = new GoogleGenerativeAI(API_KEY);
 
 // Instrução do sistema para definir a personalidade do bot
