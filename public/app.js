@@ -1,4 +1,3 @@
-
 // Elementos do DOM
 const chatMessages = document.getElementById("chat-messages");
 const messageInput = document.getElementById("message-input");
@@ -14,38 +13,6 @@ let sessionId = Date.now().toString(); // Identificador único para cada sessão
 function getCurrentTime() {
     const now = new Date();
     return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-}
-
-// Função principal de envio de mensagem
-async function sendMessage(userInput) {
-    showTypingIndicator();
-
-    try {
-        const response = await fetch('/api/chat', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                message: userInput,
-                sessionId: sessionId
-            }),
-        });
-
-        if (!response.ok) {
-            throw new Error('Network response was not ok');
-        }
-
-        const data = await response.json();
-        removeTypingIndicator();
-        addMessageToUI(data.message, 'bot');
-    } catch (err) {
-        removeTypingIndicator();
-        addMessageToUI("Erro: " + err.message, 'bot');
-        console.error(err);
-    }
-
-    isWaitingForResponse = false;
 }
 
 // Adiciona mensagem à interface
@@ -90,6 +57,38 @@ function scrollToBottom() {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 }
 
+// Função principal de envio de mensagem
+async function sendMessage(userInput) {
+    showTypingIndicator();
+
+    try {
+        const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                message: userInput,
+                sessionId: sessionId
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
+        }
+
+        const data = await response.json();
+        removeTypingIndicator();
+        addMessageToUI(data.message, 'bot');
+    } catch (err) {
+        removeTypingIndicator();
+        addMessageToUI("Erro: " + err.message, 'bot');
+        console.error(err);
+    }
+
+    isWaitingForResponse = false;
+}
+
 // Limpa o chat
 async function clearChat() {
     try {
@@ -130,13 +129,7 @@ function handleUserMessage() {
 }
 
 // Inicialização
-document.addEventListener('DOMContentLoaded', async () => {
-    try {
-        climaAtual = await obterClimaLocal();
-    } catch (error) {
-        console.error("Erro ao obter clima na inicialização:", error);
-    }
-
+document.addEventListener('DOMContentLoaded', () => {
     messageInput.addEventListener('input', () => {
         sendButton.disabled = messageInput.value.trim() === '' || isWaitingForResponse;
     });
@@ -147,17 +140,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     sendButton.addEventListener('click', handleUserMessage);
     if (clearButton) clearButton.addEventListener('click', clearChat);
-
-    if (newChatButton) {
-        newChatButton.addEventListener('click', async () => {
-            clearChat();
-            try {
-                climaAtual = await obterClimaLocal();
-            } catch (error) {
-                console.error("Erro ao obter clima:", error);
-            }
-        });
-    }
+    if (newChatButton) newChatButton.addEventListener('click', clearChat);
 
     clearChat();
 });
