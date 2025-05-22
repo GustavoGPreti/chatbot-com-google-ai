@@ -4,11 +4,14 @@ services:
     runtime: node
     plan: free
     region: oregon
-    rootDir: .
     buildCommand: npm install
     startCommand: node server.js
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
-        value: "3000"
+        value: "10000"
+    routes:
+      - type: web
+        path: /
+    autoDeploy: true
