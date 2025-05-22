@@ -1,9 +1,4 @@
 
-import { GoogleGenerativeAI } from "https://esm.run/@google/generative-ai";
-import "https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js";
-
-
-
 // Elementos do DOM
 const chatMessages = document.getElementById("chat-messages");
 const messageInput = document.getElementById("message-input");
@@ -11,68 +6,9 @@ const sendButton = document.getElementById("send-button");
 const clearButton = document.getElementById("header-button");
 const newChatButton = document.getElementById("new-chat");
 
-// Inicializa a API da Gemini
-const genAI = new GoogleGenerativeAI(API_KEY);
-
 // Variáveis globais
-let climaAtual = null;
 let isWaitingForResponse = false;
-let chatHistory = [];
-
-// Função para obter o clima de uma localização específica
-async function getWeather(args) {
-    const location = args.location;
-    const url = `https://api.openweathermap.org/data/2.5/weather?q=${location}&appid=${OPENWEATHER_API_KEY}&units=metric&lang=pt_br`;
-
-    try {
-        const response = await axios.get(url);
-        return {
-            location: response.data.name,
-            temperature: response.data.main.temp,
-            description: response.data.weather[0].description
-        };
-    } catch (error) {
-        console.error("Erro ao chamar OpenWeatherMap:", error.response?.data || error.message);
-        return { error: "Não foi possível obter o tempo." };
-    }
-}
-
-// Função para obter o clima local com fallback
-async function obterClimaLocal() {
-    return new Promise(async (resolve, reject) => {
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                async (position) => {
-                    const lat = position.coords.latitude;
-                    const lon = position.coords.longitude;
-
-                    try {
-                        const url = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&appid=${OPENWEATHER_API_KEY}&units=metric&lang=pt_br`;
-                        const response = await axios.get(url);
-                        resolve({
-                            location: response.data.name,
-                            temperature: response.data.main.temp,
-                            description: response.data.weather[0].description
-                        });
-                    } catch (error) {
-                        console.warn("Falha ao obter clima por coordenadas. Usando fallback.");
-                        resolve(await getWeather({ location: "São Paulo" }));
-                    }
-                },
-                async () => {
-                    resolve(await getWeather({ location: "São Paulo" }));
-                },
-                {
-                    enableHighAccuracy: true,
-                    timeout: 5000,
-                    maximumAge: 0
-                }
-            );
-        } else {
-            resolve(await getWeather({ location: "São Paulo" }));
-        }
-    });
-}
+let sessionId = Date.now().toString(); // Identificador único para cada sessão de chat
 
 // Funções auxiliares
 function getCurrentTime() {
@@ -80,58 +16,29 @@ function getCurrentTime() {
     return `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 }
 
-function getCurrentTime2() {
-    return new Date().toLocaleString();
-}
-
-// Personalidade do bot
-function getSystemInstruction(clima) {
-    const climaTexto = clima
-        ? `No seu local (${clima.location}), agora faz ${clima.temperature}°C com ${clima.description}.`
-        : `Não foi possível obter os dados do clima do seu local.`;
-
-    return `
-Você é o Mestre dos Prognósticos, um guru lendário das apostas esportivas em um universo onde os placares definem o destino de todos.
-Com linguagem ousada e tom confiante, seu papel é entreter e motivar os apostadores com dicas ousadas, sempre lembrando que o jogo é parte da diversão.
-A data e hora atuais são ${getCurrentTime2()}.
-suas respostas nao devem conter *, sem negrito ou italico
-${climaTexto}
-`;
-}
-
 // Função principal de envio de mensagem
 async function sendMessage(userInput) {
     showTypingIndicator();
 
     try {
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-
-        const chat = model.startChat({
-            history: chatHistory,
-            generationConfig: {
-                temperature: 0.7,
-                topK: 40,
-                topP: 0.95,
-                maxOutputTokens: 1000
+        const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
             },
-            safetySettings: [
-                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }
-            ]
+            body: JSON.stringify({
+                message: userInput,
+                sessionId: sessionId
+            }),
         });
 
-        const systemInstruction = getSystemInstruction(climaAtual);
-        const result = await chat.sendMessage(systemInstruction + "\nUsuário: " + userInput);
-        const response = await result.response;
-        const textoResposta = response.text();
+        if (!response.ok) {
+            throw new Error('Network response was not ok');
+        }
 
-        chatHistory.push({ role: "user", parts: [{ text: userInput }] });
-        chatHistory.push({ role: "model", parts: [{ text: textoResposta }] });
-
+        const data = await response.json();
         removeTypingIndicator();
-        addMessageToUI(textoResposta, 'bot');
+        addMessageToUI(data.message, 'bot');
     } catch (err) {
         removeTypingIndicator();
         addMessageToUI("Erro: " + err.message, 'bot');
@@ -184,14 +91,28 @@ function scrollToBottom() {
 }
 
 // Limpa o chat
-function clearChat() {
-    chatHistory = [];
-    chatMessages.innerHTML = `
-        <div class="bot-message message">
-            Olá! Sou o Mestre dos Prognósticos. Pronto para dominar o mundo das apostas esportivas?
-            <span class="message-time">${getCurrentTime()}</span>
-        </div>
-    `;
+async function clearChat() {
+    try {
+        await fetch('/api/clear-chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ sessionId: sessionId }),
+        });
+        
+        // Gera um novo ID de sessão
+        sessionId = Date.now().toString();
+        
+        chatMessages.innerHTML = `
+            <div class="bot-message message">
+                Olá! Sou o Mestre dos Prognósticos. Pronto para dominar o mundo das apostas esportivas?
+                <span class="message-time">${getCurrentTime()}</span>
+            </div>
+        `;
+    } catch (error) {
+        console.error('Error clearing chat:', error);
+    }
 }
 
 // Lida com envio do usuário
