@@ -118,7 +118,7 @@ process.on('unhandledRejection', (error) => {
 });
 
 // Start the server
-app.listen(PORT, () => {
-    console.log(`Server is running at http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server is running on port ${PORT}`);
     console.log('Press Ctrl+C to stop the server');
 });

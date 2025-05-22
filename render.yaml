@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: chatbot
+    runtime: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: PORT
+        value: 3000
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: OPENWEATHER_API_KEY
+        sync: false
