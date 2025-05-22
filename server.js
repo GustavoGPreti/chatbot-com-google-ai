@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const axios = require('axios');
 require('dotenv').config();
@@ -10,11 +11,17 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public'));
+app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname)));
 
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
+
+// Route to serve index.html
+app.get('/', (req, res) => {
+    res.sendFile('index.html', { root: __dirname });
+});
 
 // Chat history storage (in memory - for demonstration purposes)
 const chatHistories = new Map();
@@ -118,7 +125,7 @@ process.on('unhandledRejection', (error) => {
 });
 
 // Start the server
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
     console.log('Press Ctrl+C to stop the server');
 });
