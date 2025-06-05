@@ -11,8 +11,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static(__dirname));
-app.use(express.static(path.join(__dirname)));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -20,7 +19,7 @@ const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
 
 // Route to serve index.html
 app.get('/', (req, res) => {
-    res.sendFile('index.html', { root: __dirname });
+    res.sendFile('index.html', { root: path.join(__dirname, 'public') });
 });
 
 // Chat history storage (in memory - for demonstration purposes)
