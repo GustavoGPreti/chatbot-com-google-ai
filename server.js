@@ -18,9 +18,14 @@ mongoose.connect(process.env.MONGODB_URI, {
     console.log('Connected to MongoDB successfully');
 })
 .catch((error) => {
-    console.error('MongoDB connection error:', error);
+    console.error('MongoDB connection error:', error.message);
     console.log('Continuando sem MongoDB - logs serão salvos localmente');
 });
+
+// Middleware para verificar status do MongoDB
+function isMongoConnected() {
+    return mongoose.connection.readyState === 1;
+}
 
 // Middleware
 app.use(cors({
@@ -155,20 +160,28 @@ app.post('/api/log-connection', async (req, res) => {
             col_hora: horaFormatada,
             col_IP: ip,
             col_acao: acao
-        };
-
-        // Verifica se o MongoDB está conectado
-        if (mongoose.connection.readyState === 1) {
-            const db = mongoose.connection.db;
-            const collection = db.collection("tb_cl_user_log_acess");
-            
-            const result = await collection.insertOne(logEntry);
-            
-            res.json({ 
-                success: true, 
-                message: 'Log registrado com sucesso',
-                insertedId: result.insertedId 
-            });
+        };        // Verifica se o MongoDB está conectado
+        if (isMongoConnected()) {
+            try {
+                const db = mongoose.connection.db;
+                const collection = db.collection("tb_cl_user_log_acess");
+                
+                const result = await collection.insertOne(logEntry);
+                
+                res.json({ 
+                    success: true, 
+                    message: 'Log registrado com sucesso no MongoDB',
+                    insertedId: result.insertedId 
+                });
+            } catch (dbError) {
+                console.error('Erro ao salvar no MongoDB:', dbError.message);
+                console.log('Salvando log localmente:', logEntry);
+                res.json({ 
+                    success: true, 
+                    message: 'Log registrado localmente (erro no MongoDB)',
+                    data: logEntry 
+                });
+            }
         } else {
             // Log local se MongoDB não estiver disponível
             console.log('Log registrado localmente (MongoDB indisponível):', logEntry);
@@ -192,6 +205,16 @@ app.get('/api/user-info', (req, res) => {
                (req.connection.socket ? req.connection.socket.remoteAddress : null);
     
     res.json({ ip: ip });
+});
+
+// Status endpoint para verificar MongoDB
+app.get('/api/status', (req, res) => {
+    res.json({
+        server: 'online',
+        mongodb: isMongoConnected() ? 'connected' : 'disconnected',
+        timestamp: new Date().toISOString(),
+        ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown'
+    });
 });
 
 // Array para simular dados de ranking (em memória)
