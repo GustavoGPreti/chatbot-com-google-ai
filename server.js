@@ -19,8 +19,18 @@ mongoose.connect(process.env.MONGODB_URI)
 });
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
+    credentials: true
+}));
 app.use(express.json());
+
+// Log middleware para debug
+app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+    next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Initialize Gemini AI
@@ -29,7 +39,7 @@ const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
 
 // Route to serve index.html
 app.get('/', (req, res) => {
-    res.sendFile('index.html', { root: path.join(__dirname, 'public') });
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // Chat history storage (in memory - for demonstration purposes)
