@@ -10,12 +10,16 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI)
+mongoose.connect(process.env.MONGODB_URI, {
+    serverSelectionTimeoutMS: 5000, // Timeout após 5 segundos
+    socketTimeoutMS: 45000, // Timeout do socket
+})
 .then(() => {
     console.log('Connected to MongoDB successfully');
 })
 .catch((error) => {
     console.error('MongoDB connection error:', error);
+    console.log('Continuando sem MongoDB - logs serão salvos localmente');
 });
 
 // Middleware
@@ -141,9 +145,7 @@ app.post('/api/log-connection', async (req, res) => {
 
         if (!ip || !acao) {
             return res.status(400).json({ error: "Dados de log incompletos (IP e ação são obrigatórios)." });
-        }
-
-        const agora = new Date();
+        }        const agora = new Date();
         const dataFormatada = agora.toISOString().split('T')[0]; // YYYY-MM-DD
         const horaFormatada = agora.toTimeString().split(' ')[0]; // HH:MM:SS
 
@@ -155,16 +157,27 @@ app.post('/api/log-connection', async (req, res) => {
             col_acao: acao
         };
 
-        const db = mongoose.connection.db;
-        const collection = db.collection("tb_cl_user_log_acess");
-        
-        const result = await collection.insertOne(logEntry);
-        
-        res.json({ 
-            success: true, 
-            message: 'Log registrado com sucesso',
-            insertedId: result.insertedId 
-        });
+        // Verifica se o MongoDB está conectado
+        if (mongoose.connection.readyState === 1) {
+            const db = mongoose.connection.db;
+            const collection = db.collection("tb_cl_user_log_acess");
+            
+            const result = await collection.insertOne(logEntry);
+            
+            res.json({ 
+                success: true, 
+                message: 'Log registrado com sucesso',
+                insertedId: result.insertedId 
+            });
+        } else {
+            // Log local se MongoDB não estiver disponível
+            console.log('Log registrado localmente (MongoDB indisponível):', logEntry);
+            res.json({ 
+                success: true, 
+                message: 'Log registrado localmente (MongoDB indisponível)',
+                data: logEntry 
+            });
+        }
     } catch (error) {
         console.error('Erro ao registrar log de conexão:', error);
         res.status(500).json({ error: 'Erro interno do servidor ao registrar log' });
