@@ -1,12 +1,22 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const mongoose = require('mongoose');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// MongoDB Connection
+mongoose.connect(process.env.MONGODB_URI)
+.then(() => {
+    console.log('Connected to MongoDB successfully');
+})
+.catch((error) => {
+    console.error('MongoDB connection error:', error);
+});
 
 // Middleware
 app.use(cors());
@@ -112,6 +122,113 @@ app.post('/api/clear-chat', (req, res) => {
     const { sessionId } = req.body;
     chatHistories.delete(sessionId);
     res.json({ message: 'Chat history cleared' });
+});
+
+// Log connection endpoint
+app.post('/api/log-connection', async (req, res) => {
+    try {
+        const { ip, acao } = req.body;
+
+        if (!ip || !acao) {
+            return res.status(400).json({ error: "Dados de log incompletos (IP e ação são obrigatórios)." });
+        }
+
+        const agora = new Date();
+        const dataFormatada = agora.toISOString().split('T')[0]; // YYYY-MM-DD
+        const horaFormatada = agora.toTimeString().split(' ')[0]; // HH:MM:SS
+
+        const logEntry = {
+            col_data: dataFormatada,
+            col_hora: horaFormatada,
+            col_IP: ip,
+            col_acao: acao
+        };
+
+        const db = mongoose.connection.db;
+        const collection = db.collection("tb_cl_user_log_acess");
+        
+        const result = await collection.insertOne(logEntry);
+        
+        res.json({ 
+            success: true, 
+            message: 'Log registrado com sucesso',
+            insertedId: result.insertedId 
+        });
+    } catch (error) {
+        console.error('Erro ao registrar log de conexão:', error);
+        res.status(500).json({ error: 'Erro interno do servidor ao registrar log' });
+    }
+});
+
+// User info endpoint (para obter IP do cliente)
+app.get('/api/user-info', (req, res) => {
+    const ip = req.headers['x-forwarded-for'] || 
+               req.connection.remoteAddress || 
+               req.socket.remoteAddress ||
+               (req.connection.socket ? req.connection.socket.remoteAddress : null);
+    
+    res.json({ ip: ip });
+});
+
+// Array para simular dados de ranking (em memória)
+let dadosRankingVitrine = [];
+
+// Endpoint para registrar acesso do bot no ranking
+app.post('/api/ranking/registrar-acesso-bot', (req, res) => {
+    try {
+        const { botId, nomeBot, timestampAcesso } = req.body;
+
+        if (!botId || !nomeBot) {
+            return res.status(400).json({ error: "botId e nomeBot são obrigatórios" });
+        }
+
+        // Procura se o bot já existe no ranking
+        const botExistente = dadosRankingVitrine.find(bot => bot.botId === botId);
+
+        if (botExistente) {
+            // Incrementa o contador de acessos
+            botExistente.totalAcessos += 1;
+            botExistente.ultimoAcesso = timestampAcesso || new Date().toISOString();
+        } else {
+            // Adiciona novo bot ao ranking
+            dadosRankingVitrine.push({
+                botId: botId,
+                nomeBot: nomeBot,
+                totalAcessos: 1,
+                primeiroAcesso: timestampAcesso || new Date().toISOString(),
+                ultimoAcesso: timestampAcesso || new Date().toISOString()
+            });
+        }
+
+        // Ordena por total de acessos (decrescente)
+        dadosRankingVitrine.sort((a, b) => b.totalAcessos - a.totalAcessos);
+
+        console.log('Dados do ranking atualizados:', dadosRankingVitrine);
+
+        res.json({ 
+            success: true, 
+            message: 'Acesso registrado no ranking com sucesso',
+            ranking: dadosRankingVitrine 
+        });
+    } catch (error) {
+        console.error('Erro ao registrar acesso no ranking:', error);
+        res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+});
+
+// Endpoint para visualizar o ranking
+app.get('/api/ranking/visualizar', (req, res) => {
+    try {
+        res.json({
+            success: true,
+            ranking: dadosRankingVitrine,
+            totalBots: dadosRankingVitrine.length,
+            geradoEm: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Erro ao obter ranking:', error);
+        res.status(500).json({ error: 'Erro interno do servidor' });
+    }
 });
 
 // Handle errors globally

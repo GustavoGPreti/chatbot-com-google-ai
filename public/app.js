@@ -9,6 +9,76 @@ const newChatButton = document.getElementById("new-chat");
 let isWaitingForResponse = false;
 let sessionId = Date.now().toString(); // Identificador único para cada sessão de chat
 
+// Função para obter informações do usuário (IP)
+async function obterInformacoesUsuario() {
+    try {
+        const response = await fetch('/api/user-info');
+        if (!response.ok) {
+            throw new Error('Erro ao obter informações do usuário');
+        }
+        return await response.json();
+    } catch (error) {
+        console.error('Erro ao obter informações do usuário:', error);
+        return { ip: 'unknown' };
+    }
+}
+
+// Função para registrar conexão do usuário
+async function registrarConexaoUsuario() {
+    try {
+        const userInfo = await obterInformacoesUsuario();
+        
+        const logData = {
+            ip: userInfo.ip,
+            acao: "acesso_inicial_chatbot"
+        };
+
+        const response = await fetch('/api/log-connection', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(logData)
+        });
+
+        if (!response.ok) {
+            throw new Error('Erro ao registrar log de conexão');
+        }
+
+        const result = await response.json();
+        console.log('Log de conexão registrado:', result);
+    } catch (error) {
+        console.error('Erro ao registrar conexão do usuário:', error);
+    }
+}
+
+// Função para registrar acesso ao bot no ranking
+async function registrarAcessoBotParaRanking(botId, nomeBot) {
+    try {
+        const dataRanking = {
+            botId: botId,
+            nomeBot: nomeBot,
+            timestampAcesso: new Date().toISOString()
+            // usuarioId: 'pegar_id_do_usuario_se_tiver_login' // Futuramente
+        };
+
+        const response = await fetch('/api/ranking/registrar-acesso-bot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(dataRanking)
+        });
+
+        if (!response.ok) {
+            console.error("Falha ao registrar acesso para ranking:", await response.text());
+        } else {
+            const result = await response.json();
+            console.log("Registro de ranking:", result.message);
+        }
+    } catch (error) {
+        console.error("Erro ao registrar acesso para ranking:", error);
+    }
+}
+
 // Funções auxiliares
 function getCurrentTime() {
     const now = new Date();
@@ -136,11 +206,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     messageInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter' && !sendButton.disabled) handleUserMessage();
-    });
-
-    sendButton.addEventListener('click', handleUserMessage);
+    });    sendButton.addEventListener('click', handleUserMessage);
     if (clearButton) clearButton.addEventListener('click', clearChat);
     if (newChatButton) newChatButton.addEventListener('click', clearChat);
 
     clearChat();
+    registrarConexaoUsuario();
+    registrarAcessoBotParaRanking("chatbot-mestre-prognosticos", "Mestre dos Prognósticos - IFCODE");
 });
