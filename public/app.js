@@ -202,11 +202,11 @@ function handleUserMessage() {
 document.addEventListener('DOMContentLoaded', () => {
     messageInput.addEventListener('input', () => {
         sendButton.disabled = messageInput.value.trim() === '' || isWaitingForResponse;
+    });    messageInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && !sendButton.disabled) handleUserMessage();
     });
 
-    messageInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter' && !sendButton.disabled) handleUserMessage();
-    });    sendButton.addEventListener('click', handleUserMessage);
+    sendButton.addEventListener('click', handleUserMessage);
     if (clearButton) clearButton.addEventListener('click', clearChat);
     if (newChatButton) newChatButton.addEventListener('click', clearChat);
 
