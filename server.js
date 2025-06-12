@@ -149,6 +149,7 @@ app.post('/api/log-connection', async (req, res) => {
 
         const logEntry = {
             col_data: dataFormatada,
+            col_nome_bot: "Chatbot de Apostas Esportivas",
             col_hora: horaFormatada,
             col_IP: ip,
             col_acao: acao
