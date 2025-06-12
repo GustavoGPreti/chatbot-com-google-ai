@@ -212,5 +212,5 @@ document.addEventListener('DOMContentLoaded', () => {
 
     clearChat();
     registrarConexaoUsuario();
-    registrarAcessoBotParaRanking("chatbot-mestre-prognosticos", "Mestre dos Prognósticos - IFCODE");
+    registrarAcessoBotParaRanking("chatbot-mestre-prognosticos", "Mestre dos Prognósticos - Chatbot de Apostas Esportivas");
 });

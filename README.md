@@ -60,7 +60,9 @@ node server.js
 ### 2. Logs de Conexão
 - **POST** `/api/log-connection`
   - Registra acesso do usuário
-  - Body: `{ ip: string, acao: string }`
+  - Body: `{ ip: string, acao: string }
+  
+
   - Salva na coleção: `tb_cl_user_log_acess`
 
 - **GET** `/api/user-info`
