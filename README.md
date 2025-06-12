@@ -89,6 +89,7 @@ node server.js
 {
   "col_data": "2024-12-19",
   "col_hora": "14:30:25", 
+  "col_nome_bot": "chat de apostas",
   "col_IP": "192.168.1.100",
   "col_acao": "acesso_inicial_chatbot"
 }
