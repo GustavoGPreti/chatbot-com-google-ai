@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const mongoose = require('mongoose');
+const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const axios = require('axios');
 require('dotenv').config();
@@ -9,22 +10,60 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI, {
-    serverSelectionTimeoutMS: 5000, // Timeout após 5 segundos
-    socketTimeoutMS: 45000, // Timeout do socket
+// Múltiplas conexões MongoDB
+let dbLogs = null; // DB compartilhado para logs simples
+let dbHistoria = null; // DB individual para histórico de sessões
+
+// Função genérica para conectar ao MongoDB
+async function connectToMongoDB(uri, dbName) {
+    try {
+        const client = new MongoClient(uri, {
+            serverSelectionTimeoutMS: 5000,
+            socketTimeoutMS: 45000,
+        });
+        await client.connect();
+        console.log(`✅ Conectado ao MongoDB: ${dbName}`);
+        return client.db(dbName);
+    } catch (error) {
+        console.error(`❌ Erro ao conectar ao MongoDB ${dbName}:`, error.message);
+        return null;
+    }
+}
+
+// Inicializar conexões
+async function initializeDatabases() {
+    // Conexão para logs (DB compartilhado)
+    if (process.env.MONGO_URI_LOGS) {
+        dbLogs = await connectToMongoDB(process.env.MONGO_URI_LOGS, 'IIW2023A_Logs');
+    }
+    
+    // Conexão para histórico de sessões (DB individual)
+    if (process.env.MONGO_URI_HISTORIA) {
+        dbHistoria = await connectToMongoDB(process.env.MONGO_URI_HISTORIA, 'HistoricoChats');
+    }
+    
+    console.log('🚀 Inicialização das conexões MongoDB concluída');
+}
+
+// Inicializar conexões na inicialização do servidor
+initializeDatabases();
+
+// MongoDB Connection (mantido para compatibilidade)
+mongoose.connect(process.env.MONGODB_URI || process.env.MONGO_URI_LOGS, {
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
 })
 .then(() => {
-    console.log('Conectado ao MongoDB Atlas!');
+    console.log('✅ Mongoose conectado ao MongoDB Atlas!');
 })
 .catch((error) => {
-    console.error('MongoDB connection error:', error.message);
-    console.log('Continuando sem MongoDB - logs serão salvos localmente');
+    console.error('❌ MongoDB connection error:', error.message);
+    console.log('⚠️ Continuando sem MongoDB - logs serão salvos localmente');
 });
 
 // Middleware para verificar status do MongoDB
 function isMongoConnected() {
-    return mongoose.connection.readyState === 1;
+    return mongoose.connection.readyState === 1 || dbLogs !== null;
 }
 
 // Middleware
@@ -146,6 +185,142 @@ app.post('/api/clear-chat', (req, res) => {
     res.json({ message: 'Chat history cleared' });
 });
 
+// NOVO ENDPOINT B2.P1.A8 - Salvar histórico completo de sessão
+app.post('/api/chat/salvar-historico', async (req, res) => {
+    try {
+        const { sessionId, userId, botId, messages, startTime, endTime } = req.body;
+
+        // Validação dos dados obrigatórios
+        if (!sessionId || !botId || !messages || !Array.isArray(messages)) {
+            return res.status(400).json({ 
+                error: "Dados incompletos. sessionId, botId e messages (array) são obrigatórios." 
+            });
+        }
+
+        if (messages.length === 0) {
+            return res.status(400).json({ 
+                error: "O array de messages não pode estar vazio." 
+            });
+        }
+
+        // Estrutura dos dados para salvar
+        const sessionData = {
+            sessionId: sessionId,
+            userId: userId || null,
+            botId: botId,
+            startTime: startTime ? new Date(startTime) : new Date(),
+            endTime: endTime ? new Date(endTime) : new Date(),
+            messages: messages,
+            loggedAt: new Date()
+        };
+
+        // Tentar salvar no MongoDB individual
+        if (dbHistoria) {
+            try {
+                const collection = dbHistoria.collection("sessoesChat");
+                const result = await collection.insertOne(sessionData);
+                
+                console.log('✅ Histórico de sessão salvo no MongoDB:', {
+                    sessionId: sessionId,
+                    botId: botId,
+                    messagesCount: messages.length,
+                    insertedId: result.insertedId
+                });
+
+                res.json({
+                    success: true,
+                    message: 'Histórico de sessão salvo com sucesso no MongoDB',
+                    sessionId: sessionId,
+                    insertedId: result.insertedId,
+                    messagesCount: messages.length,
+                    storage: 'mongodb_individual'
+                });
+            } catch (dbError) {
+                console.error('❌ Erro ao salvar histórico no MongoDB:', dbError.message);
+                
+                // Fallback: salvar localmente
+                const fs = require('fs');
+                const logsDir = path.join(__dirname, 'logs');
+                const historicFile = path.join(logsDir, 'historic_sessions.json');
+                
+                try {
+                    if (!fs.existsSync(logsDir)) {
+                        fs.mkdirSync(logsDir, { recursive: true });
+                    }
+                    
+                    let sessions = [];
+                    if (fs.existsSync(historicFile)) {
+                        sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
+                    }
+                    
+                    sessions.push(sessionData);
+                    
+                    // Manter apenas as últimas 100 sessões
+                    if (sessions.length > 100) {
+                        sessions.splice(0, sessions.length - 100);
+                    }
+                    
+                    fs.writeFileSync(historicFile, JSON.stringify(sessions, null, 2));
+                    
+                    console.log('📁 Histórico salvo localmente como fallback');
+                    
+                    res.json({
+                        success: true,
+                        message: 'Histórico salvo localmente (fallback)',
+                        sessionId: sessionId,
+                        messagesCount: messages.length,
+                        storage: 'local_file_fallback'
+                    });
+                } catch (fileError) {
+                    console.error('❌ Erro ao salvar arquivo local:', fileError.message);
+                    res.status(500).json({ error: 'Erro ao salvar histórico' });
+                }
+            }
+        } else {
+            // Se não há conexão com MongoDB, salvar apenas localmente
+            const fs = require('fs');
+            const logsDir = path.join(__dirname, 'logs');
+            const historicFile = path.join(logsDir, 'historic_sessions.json');
+            
+            try {
+                if (!fs.existsSync(logsDir)) {
+                    fs.mkdirSync(logsDir, { recursive: true });
+                }
+                
+                let sessions = [];
+                if (fs.existsSync(historicFile)) {
+                    sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
+                }
+                
+                sessions.push(sessionData);
+                
+                // Manter apenas as últimas 100 sessões
+                if (sessions.length > 100) {
+                    sessions.splice(0, sessions.length - 100);
+                }
+                
+                fs.writeFileSync(historicFile, JSON.stringify(sessions, null, 2));
+                
+                console.log('📁 Histórico salvo localmente (sem MongoDB)');
+                
+                res.json({
+                    success: true,
+                    message: 'Histórico salvo localmente (MongoDB indisponível)',
+                    sessionId: sessionId,
+                    messagesCount: messages.length,
+                    storage: 'local_file_only'
+                });
+            } catch (fileError) {
+                console.error('❌ Erro ao salvar arquivo local:', fileError.message);
+                res.status(500).json({ error: 'Erro ao salvar histórico' });
+            }
+        }
+    } catch (error) {
+        console.error('❌ Erro geral ao salvar histórico:', error);
+        res.status(500).json({ error: 'Erro interno do servidor ao salvar histórico' });
+    }
+});
+
 // Log connection endpoint
 app.post('/api/log-connection', async (req, res) => {
     try {
@@ -218,7 +393,13 @@ app.get('/api/user-info', (req, res) => {
 app.get('/api/status', (req, res) => {
     res.json({
         server: 'online',
-        mongodb: isMongoConnected() ? 'connected' : 'disconnected',
+        mongodb_logs: dbLogs ? 'connected' : 'disconnected',
+        mongodb_historia: dbHistoria ? 'connected' : 'disconnected',
+        mongoose_connection: isMongoConnected() ? 'connected' : 'disconnected',
+        databases: {
+            logs: dbLogs ? 'IIW2023A_Logs (compartilhado)' : 'indisponível',
+            historia: dbHistoria ? 'HistoricoChats (individual)' : 'indisponível'
+        },
         timestamp: new Date().toISOString(),
         ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown'
     });
@@ -273,6 +454,81 @@ app.get('/api/ranking/visualizar', (req, res) => {
         res.json(rankingOrdenado);
     } catch (error) {
         console.error('Erro ao obter ranking:', error);
+        res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+});
+
+// NOVO ENDPOINT B2.P1.A8 - Visualizar histórico de sessões
+app.get('/api/chat/historico', async (req, res) => {
+    try {
+        const { limit = 10, sessionId } = req.query;
+        
+        // Tentar buscar no MongoDB primeiro
+        if (dbHistoria) {
+            try {
+                const collection = dbHistoria.collection("sessoesChat");
+                let query = {};
+                
+                if (sessionId) {
+                    query.sessionId = sessionId;
+                }
+                
+                const sessions = await collection
+                    .find(query)
+                    .sort({ loggedAt: -1 })
+                    .limit(parseInt(limit))
+                    .toArray();
+                
+                res.json({
+                    success: true,
+                    source: 'mongodb',
+                    total: sessions.length,
+                    sessions: sessions
+                });
+                return;
+            } catch (dbError) {
+                console.error('❌ Erro ao buscar histórico no MongoDB:', dbError.message);
+            }
+        }
+        
+        // Fallback para arquivo local
+        const fs = require('fs');
+        const historicFile = path.join(__dirname, 'logs', 'historic_sessions.json');
+        
+        try {
+            if (fs.existsSync(historicFile)) {
+                let sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
+                
+                if (sessionId) {
+                    sessions = sessions.filter(s => s.sessionId === sessionId);
+                }
+                
+                // Ordenar por data mais recente e limitar
+                sessions = sessions
+                    .sort((a, b) => new Date(b.loggedAt) - new Date(a.loggedAt))
+                    .slice(0, parseInt(limit));
+                
+                res.json({
+                    success: true,
+                    source: 'local_file',
+                    total: sessions.length,
+                    sessions: sessions
+                });
+            } else {
+                res.json({
+                    success: true,
+                    source: 'none',
+                    total: 0,
+                    sessions: [],
+                    message: 'Nenhum histórico encontrado'
+                });
+            }
+        } catch (fileError) {
+            console.error('❌ Erro ao ler arquivo local:', fileError.message);
+            res.status(500).json({ error: 'Erro ao buscar histórico' });
+        }
+    } catch (error) {
+        console.error('❌ Erro geral ao buscar histórico:', error);
         res.status(500).json({ error: 'Erro interno do servidor' });
     }
 });

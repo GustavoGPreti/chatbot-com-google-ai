@@ -1,0 +1,20 @@
+[
+  {
+    "col_data": "2025-06-26",
+    "col_hora": "07:56:58",
+    "col_IP": "192.168.1.100",
+    "col_nome_bot": "Chatbot de Apostas Esportivas",
+    "col_acao": "teste_sistema_local",
+    "timestamp": "2025-06-26T10:56:58.366Z",
+    "id": "1750935418366"
+  },
+  {
+    "col_data": "2025-06-26",
+    "col_hora": "07:57:26",
+    "col_IP": "::1",
+    "col_nome_bot": "Chatbot de Apostas Esportivas",
+    "col_acao": "acesso_inicial_chatbot",
+    "timestamp": "2025-06-26T10:57:26.436Z",
+    "id": "1750935446436"
+  }
+]

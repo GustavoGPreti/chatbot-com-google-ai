@@ -9,6 +9,11 @@ const newChatButton = document.getElementById("new-chat");
 let isWaitingForResponse = false;
 let sessionId = Date.now().toString(); // Identificador único para cada sessão de chat
 
+// B2.P1.A8 - Variáveis para histórico de sessão
+let chatHistory = []; // Histórico completo da sessão
+let sessionStartTime = new Date(); // Início da sessão
+let messageCount = 0; // Contador de mensagens
+
 // Função para obter informações do usuário (IP)
 async function obterInformacoesUsuario() {
     try {
@@ -79,6 +84,67 @@ async function registrarAcessoBotParaRanking(botId, nomeBot) {
     }
 }
 
+// B2.P1.A8 - Função para salvar histórico completo da sessão
+async function salvarHistoricoSessao() {
+    try {
+        // Só salva se houver mensagens no histórico
+        if (chatHistory.length === 0) {
+            console.log('Nenhuma mensagem para salvar no histórico');
+            return;
+        }
+
+        // Gerar dados da sessão
+        const sessionData = {
+            sessionId: sessionId,
+            userId: null, // Pode ser expandido no futuro para usuários autenticados
+            botId: "chatbot-mestre-prognosticos",
+            startTime: sessionStartTime.toISOString(),
+            endTime: new Date().toISOString(),
+            messages: chatHistory
+        };
+
+        console.log('💾 Salvando histórico da sessão:', {
+            sessionId: sessionId,
+            messageCount: chatHistory.length,
+            startTime: sessionStartTime,
+            endTime: new Date()
+        });
+
+        const response = await fetch('/api/chat/salvar-historico', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(sessionData)
+        });
+
+        if (!response.ok) {
+            throw new Error(`Erro HTTP: ${response.status}`);
+        }
+
+        const result = await response.json();
+        console.log('✅ Histórico salvo com sucesso:', result);
+        
+        return result;
+    } catch (error) {
+        console.error('❌ Erro ao salvar histórico da sessão:', error);
+    }
+}
+
+// Função para adicionar mensagem ao histórico local
+function adicionarMensagemAoHistorico(content, role) {
+    const message = {
+        role: role, // 'user' ou 'model'
+        parts: [{ text: content }],
+        timestamp: new Date().toISOString()
+    };
+    
+    chatHistory.push(message);
+    messageCount++;
+    
+    console.log(`📝 Mensagem adicionada ao histórico (${role}):`, message);
+}
+
 // Funções auxiliares
 function getCurrentTime() {
     const now = new Date();
@@ -131,6 +197,9 @@ function scrollToBottom() {
 async function sendMessage(userInput) {
     showTypingIndicator();
 
+    // B2.P1.A8 - Adicionar mensagem do usuário ao histórico
+    adicionarMensagemAoHistorico(userInput, 'user');
+
     try {
         const response = await fetch('/api/chat', {
             method: 'POST',
@@ -150,10 +219,20 @@ async function sendMessage(userInput) {
         const data = await response.json();
         removeTypingIndicator();
         addMessageToUI(data.message, 'bot');
+        
+        // B2.P1.A8 - Adicionar resposta do bot ao histórico
+        adicionarMensagemAoHistorico(data.message, 'model');
+        
+        // B2.P1.A8 - Salvar histórico após cada resposta do bot
+        await salvarHistoricoSessao();
+        
     } catch (err) {
         removeTypingIndicator();
         addMessageToUI("Erro: " + err.message, 'bot');
         console.error(err);
+        
+        // B2.P1.A8 - Adicionar mensagem de erro ao histórico
+        adicionarMensagemAoHistorico("Erro: " + err.message, 'model');
     }
 
     isWaitingForResponse = false;
@@ -162,6 +241,12 @@ async function sendMessage(userInput) {
 // Limpa o chat
 async function clearChat() {
     try {
+        // B2.P1.A8 - Salvar histórico final antes de limpar
+        if (chatHistory.length > 0) {
+            console.log('💾 Salvando histórico final antes de iniciar nova sessão...');
+            await salvarHistoricoSessao();
+        }
+        
         await fetch('/api/clear-chat', {
             method: 'POST',
             headers: {
@@ -170,8 +255,16 @@ async function clearChat() {
             body: JSON.stringify({ sessionId: sessionId }),
         });
         
-        // Gera um novo ID de sessão
-        sessionId = Date.now().toString();
+        // B2.P1.A8 - Resetar variáveis da sessão
+        sessionId = `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        chatHistory = [];
+        sessionStartTime = new Date();
+        messageCount = 0;
+        
+        console.log('🆕 Nova sessão iniciada:', {
+            sessionId: sessionId,
+            startTime: sessionStartTime
+        });
         
         chatMessages.innerHTML = `
             <div class="bot-message message">
@@ -179,6 +272,10 @@ async function clearChat() {
                 <span class="message-time">${getCurrentTime()}</span>
             </div>
         `;
+        
+        // B2.P1.A8 - Adicionar mensagem inicial ao novo histórico
+        adicionarMensagemAoHistorico("Olá! Sou o Mestre dos Prognósticos. Pronto para dominar o mundo das apostas esportivas?", 'model');
+        
     } catch (error) {
         console.error('Error clearing chat:', error);
     }
@@ -191,6 +288,7 @@ function handleUserMessage() {
     if (!userMessage) return;
 
     addMessageToUI(userMessage, 'user');
+    // B2.P1.A8 - Não adicionar aqui, será adicionado em sendMessage()
     messageInput.value = '';
     sendButton.disabled = true;
     messageInput.focus();
