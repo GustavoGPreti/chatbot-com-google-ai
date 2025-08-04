@@ -533,6 +533,184 @@ app.get('/api/chat/historico', async (req, res) => {
     }
 });
 
+// NOVO ENDPOINT - Listar históricos de conversas (CRUD READ)
+app.get('/api/chat/historicos', async (req, res) => {
+    try {
+        const { limit = 10, sortBy = 'startTime', order = 'desc' } = req.query;
+        
+        console.log('📖 Buscando históricos de conversas...');
+        
+        // Tentar buscar no MongoDB primeiro
+        if (dbHistoria) {
+            try {
+                const collection = dbHistoria.collection("sessoesChat");
+                
+                // Configurar ordenação
+                const sortOrder = order === 'asc' ? 1 : -1;
+                const sortOptions = {};
+                sortOptions[sortBy] = sortOrder;
+                
+                const sessions = await collection
+                    .find({})
+                    .sort(sortOptions)
+                    .limit(parseInt(limit))
+                    .toArray();
+                
+                // Formatar dados para exibição
+                const formattedSessions = sessions.map(session => ({
+                    _id: session._id,
+                    sessionId: session.sessionId,
+                    botId: session.botId,
+                    startTime: session.startTime,
+                    endTime: session.endTime,
+                    messageCount: session.messages ? session.messages.length : 0,
+                    duration: session.startTime && session.endTime ? 
+                        Math.round((new Date(session.endTime) - new Date(session.startTime)) / 1000) : 0,
+                    loggedAt: session.loggedAt,
+                    preview: session.messages && session.messages.length > 0 ? 
+                        session.messages[0].parts[0].text.substring(0, 100) + '...' : 'Sem mensagens'
+                }));
+                
+                console.log(`✅ Encontradas ${sessions.length} sessões no MongoDB`);
+                
+                res.json({
+                    success: true,
+                    source: 'mongodb',
+                    total: formattedSessions.length,
+                    sessions: formattedSessions
+                });
+                return;
+            } catch (dbError) {
+                console.error('❌ Erro ao buscar no MongoDB:', dbError.message);
+            }
+        }
+        
+        // Fallback para arquivo local
+        const fs = require('fs');
+        const historicFile = path.join(__dirname, 'logs', 'historic_sessions.json');
+        
+        try {
+            if (fs.existsSync(historicFile)) {
+                let sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
+                
+                // Aplicar ordenação e limite
+                const sortOrder = order === 'asc' ? 1 : -1;
+                sessions = sessions
+                    .sort((a, b) => {
+                        const aVal = new Date(a[sortBy] || a.loggedAt);
+                        const bVal = new Date(b[sortBy] || b.loggedAt);
+                        return sortOrder * (bVal - aVal);
+                    })
+                    .slice(0, parseInt(limit));
+                
+                // Formatar dados
+                const formattedSessions = sessions.map(session => ({
+                    sessionId: session.sessionId,
+                    botId: session.botId,
+                    startTime: session.startTime,
+                    endTime: session.endTime,
+                    messageCount: session.messages ? session.messages.length : 0,
+                    duration: session.startTime && session.endTime ? 
+                        Math.round((new Date(session.endTime) - new Date(session.startTime)) / 1000) : 0,
+                    loggedAt: session.loggedAt,
+                    preview: session.messages && session.messages.length > 0 ? 
+                        session.messages[0].parts[0].text.substring(0, 100) + '...' : 'Sem mensagens'
+                }));
+                
+                console.log(`✅ Encontradas ${sessions.length} sessões no arquivo local`);
+                
+                res.json({
+                    success: true,
+                    source: 'local_file',
+                    total: formattedSessions.length,
+                    sessions: formattedSessions
+                });
+            } else {
+                res.json({
+                    success: true,
+                    source: 'none',
+                    total: 0,
+                    sessions: [],
+                    message: 'Nenhum histórico encontrado'
+                });
+            }
+        } catch (fileError) {
+            console.error('❌ Erro ao ler arquivo local:', fileError.message);
+            res.status(500).json({ error: 'Erro ao buscar históricos' });
+        }
+    } catch (error) {
+        console.error('❌ Erro geral ao buscar históricos:', error);
+        res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+});
+
+// NOVO ENDPOINT - Obter detalhes de uma conversa específica
+app.get('/api/chat/historicos/:sessionId', async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        
+        console.log(`📖 Buscando detalhes da sessão: ${sessionId}`);
+        
+        // Tentar buscar no MongoDB primeiro
+        if (dbHistoria) {
+            try {
+                const collection = dbHistoria.collection("sessoesChat");
+                const session = await collection.findOne({ sessionId: sessionId });
+                
+                if (session) {
+                    console.log(`✅ Sessão encontrada no MongoDB: ${session.messages.length} mensagens`);
+                    res.json({
+                        success: true,
+                        source: 'mongodb',
+                        session: session
+                    });
+                    return;
+                } else {
+                    console.log('❌ Sessão não encontrada no MongoDB');
+                }
+            } catch (dbError) {
+                console.error('❌ Erro ao buscar no MongoDB:', dbError.message);
+            }
+        }
+        
+        // Fallback para arquivo local
+        const fs = require('fs');
+        const historicFile = path.join(__dirname, 'logs', 'historic_sessions.json');
+        
+        try {
+            if (fs.existsSync(historicFile)) {
+                const sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
+                const session = sessions.find(s => s.sessionId === sessionId);
+                
+                if (session) {
+                    console.log(`✅ Sessão encontrada no arquivo local: ${session.messages.length} mensagens`);
+                    res.json({
+                        success: true,
+                        source: 'local_file',
+                        session: session
+                    });
+                } else {
+                    res.status(404).json({
+                        success: false,
+                        error: 'Sessão não encontrada'
+                    });
+                }
+            } else {
+                res.status(404).json({
+                    success: false,
+                    error: 'Nenhum histórico disponível'
+                });
+            }
+        } catch (fileError) {
+            console.error('❌ Erro ao ler arquivo local:', fileError.message);
+            res.status(500).json({ error: 'Erro ao buscar sessão' });
+        }
+    } catch (error) {
+        console.error('❌ Erro geral ao buscar sessão:', error);
+        res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+});
+
 // Handle errors globally
 process.on('uncaughtException', (error) => {
     console.error('Uncaught Exception:', error);

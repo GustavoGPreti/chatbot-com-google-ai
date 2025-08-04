@@ -265,6 +265,258 @@ body {
     height: 16px;
 }
 
+/* Estilos para o painel de histórico de conversas */
+.history-panel {
+    position: fixed;
+    top: 0;
+    right: -100%;
+    width: 60%;
+    max-width: 800px;
+    height: 100vh;
+    background: #fff;
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.1);
+    transition: right 0.3s ease;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+}
+
+.history-panel.open {
+    right: 0;
+}
+
+.history-header {
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    color: var(--light-text);
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.history-header h3 {
+    font-size: 1.3rem;
+    font-weight: 600;
+}
+
+.close-history {
+    background: none;
+    border: none;
+    color: var(--light-text);
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 50%;
+    transition: background-color 0.2s;
+}
+
+.close-history:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.history-content {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    overflow: hidden;
+}
+
+.history-list-section {
+    border-right: 1px solid #e0e0e0;
+    display: flex;
+    flex-direction: column;
+}
+
+.history-controls {
+    padding: 15px;
+    border-bottom: 1px solid #e0e0e0;
+    background: #f8f9fa;
+}
+
+.refresh-button {
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9rem;
+    transition: background-color 0.2s;
+}
+
+.refresh-button:hover {
+    background: #3367d6;
+}
+
+.history-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+}
+
+.history-item {
+    padding: 12px;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: #fff;
+}
+
+.history-item:hover {
+    background: #f5f5f5;
+    border-color: var(--primary-color);
+}
+
+.history-item.selected {
+    background: #e3f2fd;
+    border-color: var(--primary-color);
+}
+
+.history-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.history-item-title {
+    font-weight: 600;
+    color: var(--dark-text);
+    font-size: 0.9rem;
+}
+
+.history-item-date {
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.history-item-preview {
+    font-size: 0.85rem;
+    color: #777;
+    line-height: 1.3;
+}
+
+.history-item-stats {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+    font-size: 0.75rem;
+    color: #888;
+}
+
+.history-detail-section {
+    display: flex;
+    flex-direction: column;
+    background: #fafafa;
+}
+
+.history-detail-header {
+    padding: 15px;
+    border-bottom: 1px solid #e0e0e0;
+    background: #fff;
+}
+
+.history-detail-header h4 {
+    color: var(--dark-text);
+    font-size: 1.1rem;
+}
+
+.history-detail-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 15px;
+}
+
+.no-selection {
+    text-align: center;
+    color: #888;
+    padding: 40px 20px;
+    font-style: italic;
+}
+
+.conversation-messages {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.history-message {
+    padding: 10px 12px;
+    border-radius: 12px;
+    max-width: 85%;
+    word-wrap: break-word;
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+.history-message.user {
+    background: var(--chat-user-color);
+    color: white;
+    align-self: flex-end;
+    margin-left: auto;
+}
+
+.history-message.bot {
+    background: #f0f0f0;
+    color: var(--dark-text);
+    align-self: flex-start;
+    border: 1px solid #e0e0e0;
+}
+
+.history-message-time {
+    font-size: 0.7rem;
+    opacity: 0.7;
+    margin-top: 4px;
+    display: block;
+}
+
+.session-info {
+    background: #e8f5e8;
+    border: 1px solid #c8e6c9;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 15px;
+}
+
+.session-info h5 {
+    margin-bottom: 8px;
+    color: #2e7d32;
+}
+
+.session-info-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    font-size: 0.85rem;
+}
+
+.session-info-item {
+    display: flex;
+    justify-content: space-between;
+}
+
+.loading-message {
+    text-align: center;
+    padding: 20px;
+    color: #666;
+    font-style: italic;
+}
+
+.error-message {
+    text-align: center;
+    padding: 20px;
+    color: #d32f2f;
+    background: #ffebee;
+    border-radius: 8px;
+    margin: 10px;
+}
+
+/* Responsividade para o painel de histórico */
 @media (max-width: 768px) {
     body {
         padding: 0;
@@ -282,5 +534,24 @@ body {
     .features-bar {
         overflow-x: auto;
         padding: 10px;
+    }
+
+    .history-panel {
+        width: 100%;
+        max-width: none;
+    }
+    
+    .history-content {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr 1fr;
+    }
+    
+    .history-list-section {
+        border-right: none;
+        border-bottom: 1px solid #e0e0e0;
+    }
+    
+    .history-detail-section {
+        border-top: 1px solid #e0e0e0;
     }
 }

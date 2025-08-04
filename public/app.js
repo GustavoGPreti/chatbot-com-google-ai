@@ -5,6 +5,15 @@ const sendButton = document.getElementById("send-button");
 const clearButton = document.getElementById("header-button");
 const newChatButton = document.getElementById("new-chat");
 
+// Novos elementos para histórico
+const historyButton = document.getElementById("history-button");
+const historyPanel = document.getElementById("history-panel");
+const closeHistoryButton = document.getElementById("close-history");
+const refreshHistoryButton = document.getElementById("refresh-history");
+const historyList = document.getElementById("history-list");
+const historyDetailSection = document.getElementById("history-detail-section");
+const historyDetailContent = document.getElementById("history-detail-content");
+
 // Variáveis globais
 let isWaitingForResponse = false;
 let sessionId = Date.now().toString(); // Identificador único para cada sessão de chat
@@ -13,6 +22,10 @@ let sessionId = Date.now().toString(); // Identificador único para cada sessão
 let chatHistory = []; // Histórico completo da sessão
 let sessionStartTime = new Date(); // Início da sessão
 let messageCount = 0; // Contador de mensagens
+
+// Variáveis para o painel de histórico
+let currentSelectedSession = null;
+let historyData = [];
 
 // Função para obter informações do usuário (IP)
 async function obterInformacoesUsuario() {
@@ -300,7 +313,9 @@ function handleUserMessage() {
 document.addEventListener('DOMContentLoaded', () => {
     messageInput.addEventListener('input', () => {
         sendButton.disabled = messageInput.value.trim() === '' || isWaitingForResponse;
-    });    messageInput.addEventListener('keypress', (e) => {
+    });
+    
+    messageInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter' && !sendButton.disabled) handleUserMessage();
     });
 
@@ -308,7 +323,229 @@ document.addEventListener('DOMContentLoaded', () => {
     if (clearButton) clearButton.addEventListener('click', clearChat);
     if (newChatButton) newChatButton.addEventListener('click', clearChat);
 
+    // Event listeners para o histórico
+    if (historyButton) historyButton.addEventListener('click', toggleHistoryPanel);
+    if (closeHistoryButton) closeHistoryButton.addEventListener('click', closeHistoryPanel);
+    if (refreshHistoryButton) refreshHistoryButton.addEventListener('click', loadHistoryList);
+
     clearChat();
     registrarConexaoUsuario();
     registrarAcessoBotParaRanking("chatbot-mestre-prognosticos", "Mestre dos Prognósticos - Chatbot de Apostas Esportivas");
 });
+
+// =============== FUNCIONALIDADES DE HISTÓRICO ===============
+
+// Função para alternar o painel de histórico
+function toggleHistoryPanel() {
+    if (historyPanel.classList.contains('open')) {
+        closeHistoryPanel();
+    } else {
+        openHistoryPanel();
+    }
+}
+
+// Função para abrir o painel de histórico
+function openHistoryPanel() {
+    historyPanel.classList.add('open');
+    loadHistoryList(); // Carregar lista ao abrir
+}
+
+// Função para fechar o painel de histórico
+function closeHistoryPanel() {
+    historyPanel.classList.remove('open');
+    currentSelectedSession = null;
+    clearHistoryDetail();
+}
+
+// Função para carregar lista de históricos
+async function loadHistoryList() {
+    try {
+        console.log('📚 Carregando lista de históricos...');
+        
+        // Mostrar indicador de carregamento
+        historyList.innerHTML = '<div class="loading-message">Carregando histórico...</div>';
+        
+        const response = await fetch('/api/chat/historicos?limit=20&sortBy=startTime&order=desc');
+        
+        if (!response.ok) {
+            throw new Error(`Erro HTTP: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        console.log('✅ Históricos carregados:', data);
+        
+        historyData = data.sessions || [];
+        renderHistoryList(historyData);
+        
+    } catch (error) {
+        console.error('❌ Erro ao carregar históricos:', error);
+        historyList.innerHTML = '<div class="error-message">Erro ao carregar histórico: ' + error.message + '</div>';
+    }
+}
+
+// Função para renderizar a lista de históricos
+function renderHistoryList(sessions) {
+    if (!sessions || sessions.length === 0) {
+        historyList.innerHTML = '<div class="loading-message">Nenhum histórico encontrado</div>';
+        return;
+    }
+    
+    const historyHTML = sessions.map(session => {
+        const startDate = new Date(session.startTime);
+        const formattedDate = startDate.toLocaleDateString('pt-BR');
+        const formattedTime = startDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        const duration = formatDuration(session.duration);
+        
+        return `
+            <div class="history-item" data-session-id="${session.sessionId}" onclick="selectHistorySession('${session.sessionId}')">
+                <div class="history-item-header">
+                    <div class="history-item-title">Conversa ${session.sessionId.substring(0, 8)}...</div>
+                    <div class="history-item-date">${formattedDate}</div>
+                </div>
+                <div class="history-item-preview">${session.preview}</div>
+                <div class="history-item-stats">
+                    <span>⏰ ${formattedTime}</span>
+                    <span>💬 ${session.messageCount} msgs</span>
+                    <span>⏱️ ${duration}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    historyList.innerHTML = historyHTML;
+}
+
+// Função para formatar duração em segundos
+function formatDuration(seconds) {
+    if (!seconds || seconds === 0) return '0s';
+    
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    
+    if (minutes > 0) {
+        return `${minutes}m ${remainingSeconds}s`;
+    } else {
+        return `${remainingSeconds}s`;
+    }
+}
+
+// Função para selecionar uma sessão de histórico
+async function selectHistorySession(sessionId) {
+    try {
+        console.log(`📖 Selecionando sessão: ${sessionId}`);
+        
+        // Marcar item como selecionado
+        document.querySelectorAll('.history-item').forEach(item => {
+            item.classList.remove('selected');
+        });
+        
+        const selectedItem = document.querySelector(`[data-session-id="${sessionId}"]`);
+        if (selectedItem) {
+            selectedItem.classList.add('selected');
+        }
+        
+        currentSelectedSession = sessionId;
+        
+        // Mostrar indicador de carregamento
+        historyDetailContent.innerHTML = '<div class="loading-message">Carregando conversa...</div>';
+        
+        // Buscar detalhes da sessão
+        const response = await fetch(`/api/chat/historicos/${sessionId}`);
+        
+        if (!response.ok) {
+            throw new Error(`Erro HTTP: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        console.log('✅ Detalhes da sessão carregados:', data);
+        
+        if (data.success && data.session) {
+            renderSessionDetail(data.session);
+        } else {
+            throw new Error('Sessão não encontrada');
+        }
+        
+    } catch (error) {
+        console.error('❌ Erro ao carregar sessão:', error);
+        historyDetailContent.innerHTML = '<div class="error-message">Erro ao carregar conversa: ' + error.message + '</div>';
+    }
+}
+
+// Função para renderizar detalhes de uma sessão
+function renderSessionDetail(session) {
+    const startDate = new Date(session.startTime);
+    const endDate = new Date(session.endTime);
+    const duration = Math.round((endDate - startDate) / 1000);
+    
+    const sessionInfoHTML = `
+        <div class="session-info">
+            <h5>📊 Informações da Sessão</h5>
+            <div class="session-info-grid">
+                <div class="session-info-item">
+                    <span>ID da Sessão:</span>
+                    <span>${session.sessionId}</span>
+                </div>
+                <div class="session-info-item">
+                    <span>Bot:</span>
+                    <span>${session.botId}</span>
+                </div>
+                <div class="session-info-item">
+                    <span>Início:</span>
+                    <span>${startDate.toLocaleString('pt-BR')}</span>
+                </div>
+                <div class="session-info-item">
+                    <span>Fim:</span>
+                    <span>${endDate.toLocaleString('pt-BR')}</span>
+                </div>
+                <div class="session-info-item">
+                    <span>Duração:</span>
+                    <span>${formatDuration(duration)}</span>
+                </div>
+                <div class="session-info-item">
+                    <span>Mensagens:</span>
+                    <span>${session.messages ? session.messages.length : 0}</span>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    const messagesHTML = session.messages && session.messages.length > 0 
+        ? renderHistoryMessages(session.messages)
+        : '<div class="no-selection">Nenhuma mensagem encontrada nesta sessão</div>';
+    
+    historyDetailContent.innerHTML = sessionInfoHTML + '<div class="conversation-messages">' + messagesHTML + '</div>';
+}
+
+// Função para renderizar mensagens do histórico
+function renderHistoryMessages(messages) {
+    return messages.map(message => {
+        const timestamp = new Date(message.timestamp);
+        const formattedTime = timestamp.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        const text = message.parts && message.parts[0] ? message.parts[0].text : 'Mensagem sem conteúdo';
+        const role = message.role;
+        
+        // Processar texto se for do bot (mesmo processamento do chat principal)
+        let processedText = text;
+        if (role === 'model') {
+            processedText = processedText
+                .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+                .split('\n\n')
+                .map(p => `<p>${p}</p>`)
+                .join('');
+        }
+        
+        return `
+            <div class="history-message ${role === 'user' ? 'user' : 'bot'}">
+                ${processedText}
+                <span class="history-message-time">${formattedTime}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+// Função para limpar detalhes do histórico
+function clearHistoryDetail() {
+    historyDetailContent.innerHTML = '<div class="no-selection">Selecione uma conversa para ver os detalhes</div>';
+}
