@@ -533,6 +533,191 @@ app.get('/api/chat/historico', async (req, res) => {
     }
 });
 
+// Endpoint para deletar histórico
+app.delete('/api/chat/historicos/:sessionId', async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        
+        // Tentar deletar no MongoDB primeiro
+        if (dbHistoria) {
+            try {
+                const collection = dbHistoria.collection("sessoesChat");
+                const result = await collection.deleteOne({ sessionId: sessionId });
+                
+                if (result.deletedCount === 1) {
+                    console.log(`✅ Sessão ${sessionId} excluída do MongoDB`);
+                    res.json({
+                        success: true,
+                        message: 'Histórico excluído com sucesso'
+                    });
+                    return;
+                }
+            } catch (dbError) {
+                console.error('❌ Erro ao excluir do MongoDB:', dbError.message);
+            }
+        }
+        
+        // Fallback para arquivo local
+        const fs = require('fs');
+        const historicFile = path.join(__dirname, 'logs', 'historic_sessions.json');
+        
+        try {
+            if (fs.existsSync(historicFile)) {
+                let sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
+                const initialLength = sessions.length;
+                
+                sessions = sessions.filter(s => s.sessionId !== sessionId);
+                
+                if (sessions.length < initialLength) {
+                    fs.writeFileSync(historicFile, JSON.stringify(sessions, null, 2));
+                    console.log(`✅ Sessão ${sessionId} excluída do arquivo local`);
+                    res.json({
+                        success: true,
+                        message: 'Histórico excluído com sucesso',
+                        storage: 'local_file'
+                    });
+                    return;
+                }
+            }
+            
+            throw new Error('Sessão não encontrada');
+        } catch (fileError) {
+            console.error('❌ Erro ao manipular arquivo local:', fileError.message);
+            res.status(404).json({ error: 'Histórico não encontrado' });
+        }
+    } catch (error) {
+        console.error('❌ Erro geral ao excluir histórico:', error);
+        res.status(500).json({ error: 'Erro ao excluir histórico' });
+    }
+});
+
+// Endpoint para gerar título sugerido
+app.get('/api/chat/historicos/:sessionId/gerar-titulo', async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        
+        // Buscar a sessão primeiro
+        let session;
+        
+        if (dbHistoria) {
+            const collection = dbHistoria.collection("sessoesChat");
+            session = await collection.findOne({ sessionId: sessionId });
+        }
+        
+        if (!session) {
+            // Tentar arquivo local
+            const fs = require('fs');
+            const historicFile = path.join(__dirname, 'logs', 'historic_sessions.json');
+            if (fs.existsSync(historicFile)) {
+                const sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
+                session = sessions.find(s => s.sessionId === sessionId);
+            }
+        }
+        
+        if (!session) {
+            throw new Error('Sessão não encontrada');
+        }
+        
+        // Gerar prompt para o Gemini
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        
+        const primeiraMensagem = session.messages[0].parts[0].text;
+        const ultimaMensagem = session.messages[session.messages.length - 1].parts[0].text;
+        
+        const prompt = `
+        Analise esta conversa e sugira um título curto e descritivo (máximo 50 caracteres).
+        
+        Primeira mensagem da conversa:
+        "${primeiraMensagem}"
+        
+        Última mensagem da conversa:
+        "${ultimaMensagem}"
+        
+        Total de mensagens: ${session.messages.length}
+        
+        Responda APENAS com o título sugerido, sem explicações ou formatações adicionais.
+        `;
+        
+        const result = await model.generateContent(prompt);
+        const tituloSugerido = result.response.text().trim();
+        
+        res.json({
+            success: true,
+            tituloSugerido: tituloSugerido
+        });
+        
+    } catch (error) {
+        console.error('❌ Erro ao gerar título:', error);
+        res.status(500).json({ error: 'Erro ao gerar título' });
+    }
+});
+
+// Endpoint para atualizar título
+app.put('/api/chat/historicos/:sessionId/atualizar-titulo', async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const { titulo } = req.body;
+        
+        if (!titulo) {
+            return res.status(400).json({ error: 'Título é obrigatório' });
+        }
+        
+        // Tentar atualizar no MongoDB primeiro
+        if (dbHistoria) {
+            try {
+                const collection = dbHistoria.collection("sessoesChat");
+                const result = await collection.updateOne(
+                    { sessionId: sessionId },
+                    { $set: { titulo: titulo } }
+                );
+                
+                if (result.modifiedCount === 1) {
+                    console.log(`✅ Título atualizado no MongoDB para sessão ${sessionId}`);
+                    res.json({
+                        success: true,
+                        message: 'Título atualizado com sucesso'
+                    });
+                    return;
+                }
+            } catch (dbError) {
+                console.error('❌ Erro ao atualizar título no MongoDB:', dbError.message);
+            }
+        }
+        
+        // Fallback para arquivo local
+        const fs = require('fs');
+        const historicFile = path.join(__dirname, 'logs', 'historic_sessions.json');
+        
+        try {
+            if (fs.existsSync(historicFile)) {
+                let sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
+                const session = sessions.find(s => s.sessionId === sessionId);
+                
+                if (session) {
+                    session.titulo = titulo;
+                    fs.writeFileSync(historicFile, JSON.stringify(sessions, null, 2));
+                    
+                    console.log(`✅ Título atualizado no arquivo local para sessão ${sessionId}`);
+                    res.json({
+                        success: true,
+                        message: 'Título atualizado com sucesso',
+                        storage: 'local_file'
+                    });
+                    return;
+                }
+            }
+            
+            throw new Error('Sessão não encontrada');
+        } catch (fileError) {
+            console.error('❌ Erro ao manipular arquivo local:', fileError.message);
+            res.status(404).json({ error: 'Histórico não encontrado' });
+        }
+    } catch (error) {
+        console.error('❌ Erro geral ao atualizar título:', error);
+        res.status(500).json({ error: 'Erro ao atualizar título' });
+    }
+});
+
 // NOVO ENDPOINT - Listar históricos de conversas (CRUD READ)
 app.get('/api/chat/historicos', async (req, res) => {
     try {

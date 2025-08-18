@@ -14,6 +14,83 @@ const historyList = document.getElementById("history-list");
 const historyDetailSection = document.getElementById("history-detail-section");
 const historyDetailContent = document.getElementById("history-detail-content");
 
+// Funções do histórico
+function toggleHistoryPanel() {
+    if (historyPanel.classList.contains('open')) {
+        historyPanel.classList.remove('open');
+        clearHistoryDetail();
+    } else {
+        historyPanel.classList.add('open');
+        carregarHistorico();
+    }
+}
+
+async function carregarHistorico() {
+    try {
+        historyList.innerHTML = '<div class="loading-message">Carregando histórico...</div>';
+        
+        const response = await fetch('/api/chat/historicos');
+        const data = await response.json();
+        
+        if (!data.success) {
+            throw new Error(data.error || 'Erro ao carregar histórico');
+        }
+        
+        historyData = data.sessions;
+        renderizarListaHistorico();
+    } catch (error) {
+        historyList.innerHTML = `
+            <div class="error-message">
+                Erro ao carregar histórico: ${error.message}
+            </div>
+        `;
+    }
+}
+
+function renderizarListaHistorico() {
+    if (!historyData.length) {
+        historyList.innerHTML = '<div class="loading-message">Nenhuma conversa encontrada</div>';
+        return;
+    }
+    historyList.innerHTML = historyData.map(session => {
+        const startDate = new Date(session.startTime);
+        const formattedTime = startDate.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        const duration = formatDuration(session.duration);
+        return `
+            <div class="history-item ${currentSelectedSession === session.sessionId ? 'selected' : ''}" data-session-id="${session.sessionId}">
+                <div class="history-item-header">
+                    <div class="history-item-title">
+                        ${session.titulo || `Conversa ${session.sessionId.substring(0, 8)}...`}
+                    </div>
+                    <div class="history-item-actions">
+                        <button class="title-button" data-action="gerar-titulo" title="Gerar título" type="button">✨</button>
+                        <button class="delete-button" data-action="excluir" title="Excluir conversa" type="button">🗑️</button>
+                    </div>
+                </div>
+                <div class="history-item-preview">${session.preview || 'Sem prévia disponível'}</div>
+                <div class="history-item-stats">
+                    <span>⏰ ${formattedTime}</span>
+                    <span>💬 ${session.messageCount} msgs</span>
+                    <span>⏱️ ${duration}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function formatDuration(seconds) {
+    if (!seconds || seconds === 0) return '0s';
+    
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    
+    if (minutes > 0) {
+        return `${minutes}m ${remainingSeconds}s`;
+    } else {
+        return `${remainingSeconds}s`;
+    }
+}
+
 // Variáveis globais
 let isWaitingForResponse = false;
 let sessionId = Date.now().toString(); // Identificador único para cada sessão de chat
@@ -309,11 +386,94 @@ function handleUserMessage() {
     sendMessage(userMessage);
 }
 
+// Modal de edição de título
+let modalSessionId = null;
+const editTitleModal = document.getElementById('edit-title-modal');
+const editTitleInput = document.getElementById('edit-title-input');
+const saveTitleBtn = document.getElementById('save-title-btn');
+const cancelTitleBtn = document.getElementById('cancel-title-btn');
+const closeEditTitleModal = document.getElementById('close-edit-title-modal');
+
+function openEditTitleModal(sessionId, tituloSugerido) {
+    modalSessionId = sessionId;
+    editTitleInput.value = tituloSugerido || '';
+    editTitleModal.style.display = 'flex';
+    editTitleInput.focus();
+}
+function closeEditTitle() {
+    modalSessionId = null;
+    editTitleModal.style.display = 'none';
+}
+if (saveTitleBtn) {
+    saveTitleBtn.onclick = async function() {
+        const novoTitulo = editTitleInput.value.trim();
+        if (!novoTitulo) return;
+        if (!modalSessionId) return;
+        saveTitleBtn.disabled = true;
+        try {
+            const update = await fetch(`/api/chat/historicos/${modalSessionId}/atualizar-titulo`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ titulo: novoTitulo })
+            });
+            if (!update.ok) throw new Error('Erro ao salvar título');
+            await carregarHistorico();
+            closeEditTitle();
+        } catch (err) {
+            alert('Erro ao salvar título: ' + err.message);
+        }
+        saveTitleBtn.disabled = false;
+    };
+}
+if (cancelTitleBtn) cancelTitleBtn.onclick = closeEditTitle;
+if (closeEditTitleModal) closeEditTitleModal.onclick = closeEditTitle;
+window.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && editTitleModal.style.display === 'flex') closeEditTitle();
+});
+
+// Modal de confirmação de exclusão
+let deleteSessionId = null;
+const deleteConfirmModal = document.getElementById('delete-confirm-modal');
+const confirmDeleteBtn = document.getElementById('confirm-delete-btn');
+const cancelDeleteBtn = document.getElementById('cancel-delete-btn');
+const closeDeleteModal = document.getElementById('close-delete-modal');
+
+function openDeleteModal(sessionId) {
+    deleteSessionId = sessionId;
+    deleteConfirmModal.style.display = 'flex';
+}
+function closeDelete() {
+    deleteSessionId = null;
+    deleteConfirmModal.style.display = 'none';
+}
+if (confirmDeleteBtn) {
+    confirmDeleteBtn.onclick = async function() {
+        if (!deleteSessionId) return;
+        confirmDeleteBtn.disabled = true;
+        try {
+            const response = await fetch(`/api/chat/historicos/${deleteSessionId}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error('Erro ao excluir histórico');
+            await carregarHistorico();
+            clearHistoryDetail();
+            closeDelete();
+        } catch (err) {
+            alert('Erro ao excluir: ' + err.message);
+        }
+        confirmDeleteBtn.disabled = false;
+    };
+}
+if (cancelDeleteBtn) cancelDeleteBtn.onclick = closeDelete;
+if (closeDeleteModal) closeDeleteModal.onclick = closeDelete;
+window.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && deleteConfirmModal.style.display === 'flex') closeDelete();
+});
+
 // Inicialização
 document.addEventListener('DOMContentLoaded', () => {
+    // Input e envio de mensagens
     messageInput.addEventListener('input', () => {
         sendButton.disabled = messageInput.value.trim() === '' || isWaitingForResponse;
-    });
+    });    
     
     messageInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter' && !sendButton.disabled) handleUserMessage();
@@ -324,13 +484,61 @@ document.addEventListener('DOMContentLoaded', () => {
     if (newChatButton) newChatButton.addEventListener('click', clearChat);
 
     // Event listeners para o histórico
-    if (historyButton) historyButton.addEventListener('click', toggleHistoryPanel);
-    if (closeHistoryButton) closeHistoryButton.addEventListener('click', closeHistoryPanel);
-    if (refreshHistoryButton) refreshHistoryButton.addEventListener('click', loadHistoryList);
-
-    clearChat();
+    if (historyButton) {
+        historyButton.addEventListener('click', toggleHistoryPanel);
+    }
+    if (closeHistoryButton) {
+        closeHistoryButton.addEventListener('click', () => historyPanel.classList.remove('open'));
+    }
+    if (refreshHistoryButton) {
+        refreshHistoryButton.addEventListener('click', carregarHistorico);
+    }    clearChat();
     registrarConexaoUsuario();
     registrarAcessoBotParaRanking("chatbot-mestre-prognosticos", "Mestre dos Prognósticos - Chatbot de Apostas Esportivas");
+
+    // Delegação de eventos para botões do histórico (garantido após DOM pronto)
+    if (historyList) {
+        historyList.addEventListener('click', async function(e) {
+            const item = e.target.closest('.history-item');
+            if (!item) return;
+            const sessionId = item.getAttribute('data-session-id');
+
+            // Botão Excluir
+            if (e.target.matches('button[data-action="excluir"]')) {
+                e.preventDefault();
+                e.stopPropagation();
+                openDeleteModal(sessionId);
+                return;
+            }
+
+            // Botão Gerar Título
+            if (e.target.matches('button[data-action="gerar-titulo"]')) {
+                e.preventDefault();
+                e.stopPropagation();
+                try {
+                    const btn = e.target;
+                    btn.disabled = true;
+                    btn.textContent = '...';
+                    const response = await fetch(`/api/chat/historicos/${sessionId}/gerar-titulo`);
+                    if (!response.ok) throw new Error('Erro ao gerar título');
+                    const data = await response.json();
+                    openEditTitleModal(sessionId, data.tituloSugerido);
+                    btn.disabled = false;
+                    btn.textContent = '✨';
+                } catch (err) {
+                    alert('Erro ao gerar título: ' + err.message);
+                    e.target.disabled = false;
+                    e.target.textContent = '✨';
+                }
+                return;
+            }
+
+            // Clique no item (exceto botões): mostrar detalhes
+            if (!e.target.closest('button')) {
+                selecionarSessao(sessionId);
+            }
+        });
+    }
 });
 
 // =============== FUNCIONALIDADES DE HISTÓRICO ===============
@@ -398,12 +606,24 @@ function renderHistoryList(sessions) {
         const duration = formatDuration(session.duration);
         
         return `
-            <div class="history-item" data-session-id="${session.sessionId}" onclick="selectHistorySession('${session.sessionId}')">
+            <div class="history-item ${currentSelectedSession === session.sessionId ? 'selected' : ''}" 
+                 data-session-id="${session.sessionId}">
                 <div class="history-item-header">
-                    <div class="history-item-title">Conversa ${session.sessionId.substring(0, 8)}...</div>
-                    <div class="history-item-date">${formattedDate}</div>
+                    <div class="history-item-title">
+                        ${session.titulo || `Conversa ${session.sessionId.substring(0, 8)}...`}
+                    </div>
+                    <div class="history-item-actions">
+                        <button class="title-button" data-action="gerar-titulo" title="Gerar título" type="button">
+                            ✨
+                        </button>
+                        <button class="delete-button" data-action="excluir" title="Excluir conversa" type="button">
+                            🗑️
+                        </button>
+                    </div>
                 </div>
-                <div class="history-item-preview">${session.preview}</div>
+                <div class="history-item-preview" onclick="selectHistorySession('${session.sessionId}')">
+                    ${session.preview}
+                </div>
                 <div class="history-item-stats">
                     <span>⏰ ${formattedTime}</span>
                     <span>💬 ${session.messageCount} msgs</span>
@@ -545,7 +765,234 @@ function renderHistoryMessages(messages) {
     }).join('');
 }
 
-// Função para limpar detalhes do histórico
+// Funções de manipulação do histórico
 function clearHistoryDetail() {
     historyDetailContent.innerHTML = '<div class="no-selection">Selecione uma conversa para ver os detalhes</div>';
 }
+
+async function selecionarSessao(sessionId) {
+    try {
+        console.log(`📖 Carregando detalhes da sessão: ${sessionId}`);
+        currentSelectedSession = sessionId;
+        
+        // Atualizar visual da seleção
+        document.querySelectorAll('.history-item').forEach(item => {
+            if (item.dataset.sessionId === sessionId) {
+                item.classList.add('selected');
+            } else {
+                item.classList.remove('selected');
+            }
+        });
+        
+        // Mostrar loading
+        historyDetailContent.innerHTML = '<div class="loading-message">Carregando conversa...</div>';
+        
+        const response = await fetch(`/api/chat/historicos/${sessionId}`);
+        
+        if (!response.ok) {
+            throw new Error(`Erro ao carregar conversa: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (!data.success || !data.session) {
+            throw new Error('Conversa não encontrada');
+        }
+        
+        const session = data.session;
+        
+        // Renderizar detalhes
+        historyDetailContent.innerHTML = `
+            <div class="session-info">
+                <h5>${session.titulo || 'Conversa Sem Título'}</h5>
+                <div class="session-info-grid">
+                    <div class="session-info-item">
+                        <span>Início:</span>
+                        <span>${new Date(session.startTime).toLocaleString('pt-BR')}</span>
+                    </div>
+                    <div class="session-info-item">
+                        <span>Duração:</span>
+                        <span>${formatDuration(
+                            Math.round((new Date(session.endTime) - new Date(session.startTime)) / 1000)
+                        )}</span>
+                    </div>
+                    <div class="session-info-item">
+                        <span>Mensagens:</span>
+                        <span>${session.messages.length}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="conversation-messages">
+                ${session.messages.map(msg => `
+                    <div class="history-message ${msg.role === 'user' ? 'user' : 'bot'}">
+                        ${msg.parts[0].text}
+                        <span class="history-message-time">
+                            ${new Date(msg.timestamp).toLocaleTimeString('pt-BR')}
+                        </span>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    } catch (error) {
+        console.error('❌ Erro ao carregar conversa:', error);
+        historyDetailContent.innerHTML = `
+            <div class="error-message">
+                Erro ao carregar conversa: ${error.message}
+            </div>
+        `;
+    }
+}
+
+// Função para excluir histórico
+async function excluirHistorico(sessionId, event) {
+    // Prevenir que o clique no botão selecione a conversa
+    event.stopPropagation();
+    
+    if (!confirm('Tem certeza que deseja excluir esta conversa?')) {
+        return;
+    }
+    
+    try {
+        console.log('🗑️ Excluindo histórico:', sessionId);
+        
+        const response = await fetch(`/api/chat/historicos/${sessionId}`, {
+            method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Erro HTTP: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            console.log('✅ Histórico excluído com sucesso');
+            
+            // Atualizar lista
+            await loadHistoryList();
+            
+            // Limpar detalhes se a sessão excluída era a selecionada
+            if (currentSelectedSession === sessionId) {
+                currentSelectedSession = null;
+                clearHistoryDetail();
+            }
+        } else {
+            throw new Error(data.error || 'Erro ao excluir histórico');
+        }
+    } catch (error) {
+        console.error('❌ Erro ao excluir histórico:', error);
+        alert('Erro ao excluir histórico: ' + error.message);
+    }
+}
+
+// Função para gerar título sugerido
+async function gerarTituloSugestao(sessionId, event) {
+    // Prevenir que o clique no botão selecione a conversa
+    event.stopPropagation();
+    
+    try {
+        console.log('✨ Gerando título para sessão:', sessionId);
+        
+        // Mostrar loading
+        const titleElement = document.querySelector(`[data-session-id="${sessionId}"] .history-item-title`);
+        const originalTitle = titleElement.textContent;
+        titleElement.textContent = 'Gerando título...';
+        
+        const response = await fetch(`/api/chat/historicos/${sessionId}/gerar-titulo`);
+        
+        if (!response.ok) {
+            throw new Error(`Erro HTTP: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            console.log('✅ Título sugerido:', data.tituloSugerido);
+            
+            // Solicitar edição do título
+            const novoTitulo = prompt('Edite o título sugerido:', data.tituloSugerido);
+            
+            if (novoTitulo) {
+                // Salvar novo título
+                const updateResponse = await fetch(`/api/chat/historicos/${sessionId}/atualizar-titulo`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ titulo: novoTitulo })
+                });
+                
+                if (!updateResponse.ok) {
+                    throw new Error('Erro ao salvar novo título');
+                }
+                
+                const updateData = await updateResponse.json();
+                
+                if (updateData.success) {
+                    console.log('✅ Título atualizado com sucesso');
+                    titleElement.textContent = novoTitulo;
+                } else {
+                    throw new Error(updateData.error || 'Erro ao salvar título');
+                }
+            } else {
+                // Usuário cancelou, restaurar título original
+                titleElement.textContent = originalTitle;
+            }
+        } else {
+            throw new Error(data.error || 'Erro ao gerar título');
+        }
+    } catch (error) {
+        console.error('❌ Erro ao gerar/atualizar título:', error);
+        alert('Erro ao gerar/atualizar título: ' + error.message);
+        
+        // Restaurar título original em caso de erro
+        const titleElement = document.querySelector(`[data-session-id="${sessionId}"] .history-item-title`);
+        if (titleElement) {
+            titleElement.textContent = originalTitle || `Conversa ${sessionId.substring(0, 8)}...`;
+        }
+    }
+}
+
+// Exemplo de ajuste de placeholder e título para estética de apostas
+
+document.addEventListener('DOMContentLoaded', () => {
+    const messageInput = document.getElementById('message-input');
+    if (messageInput) {
+        messageInput.placeholder = 'Digite sua aposta, palpite ou dúvida...';
+    }
+    const sendButton = document.getElementById('send-button');
+    if (sendButton) {
+        sendButton.title = 'Enviar aposta';
+    }
+    // Ajusta título do histórico
+    const historyHeader = document.querySelector('.history-header h3');
+    if (historyHeader) {
+        historyHeader.textContent = 'Histórico de Apostas';
+    }
+    
+    // Botão de reiniciar chat
+    const resetBtn = document.getElementById('reset-chat');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', () => {
+            const chatMessages = document.getElementById('chat-messages');
+            if (chatMessages) {
+                chatMessages.innerHTML = `<div class="bot-message message">
+                    Olá! Sou o Mestre dos Prognósticos. Pronto para dominar o mundo das apostas esportivas?
+                    <span class="message-time">${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                </div>`;
+            }
+        });
+    }
+    // Botão de configurações (pode abrir um modal futuramente)
+    const settingsBtn = document.getElementById('open-settings');
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', () => {
+            alert('Em breve: configurações personalizadas para suas apostas!');
+        });
+    }
+    // Botão de abrir histórico (garante funcionamento)
+    const openHistoryBtn = document.getElementById('open-history');
+    if (openHistoryBtn) {
+        openHistoryBtn.addEventListener('click', toggleHistoryPanel);
+    }
+});
