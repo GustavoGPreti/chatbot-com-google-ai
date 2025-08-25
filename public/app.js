@@ -539,6 +539,29 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+    
+    // Modal Sobre o Autor
+    const openAboutBtn = document.getElementById('open-about');
+    const aboutModal = document.getElementById('about-modal');
+    const closeAboutModal = document.getElementById('close-about-modal');
+    if (openAboutBtn && aboutModal) {
+        openAboutBtn.addEventListener('click', () => {
+            aboutModal.style.display = 'flex';
+            aboutModal.classList.add('show');
+        });
+    }
+    if (closeAboutModal && aboutModal) {
+        closeAboutModal.addEventListener('click', () => {
+            aboutModal.style.display = 'none';
+            aboutModal.classList.remove('show');
+        });
+    }
+    window.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && aboutModal && (aboutModal.style.display === 'flex' || aboutModal.classList.contains('show'))) {
+            aboutModal.style.display = 'none';
+            aboutModal.classList.remove('show');
+        }
+    });
 });
 
 // =============== FUNCIONALIDADES DE HISTÓRICO ===============

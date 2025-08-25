@@ -5,7 +5,7 @@
     --secondary-color: #ffd700;
     /* dourado */
     --background-color: #181c23;
-    --chat-user-color: #ffd700;
+    --chat-user-color: rgba(87, 246, 87, 0.267);
     --chat-bot-color: #232a34;
     --dark-text: #fff;
     --light-text: #fff;
@@ -496,11 +496,12 @@ body {
 }
 
 .history-message.user {
-    background: #232a34;
-    color: #ffd700;
+    color: #312b08;
+    background: #222733;
     border-radius: 8px;
     padding: 8px 14px;
     margin-bottom: 6px;
+    text-shadow: 0 1px 6px #000;
 }
 
 .history-message.bot {
@@ -512,7 +513,7 @@ body {
 }
 
 .history-message-time {
-    color: #ffd700;
+    color: #463f16;
     font-size: 0.85em;
     margin-left: 8px;
 }
@@ -731,4 +732,123 @@ body {
     color: #ffd700;
     font-size: 1.5em;
     text-shadow: 0 2px 8px #000, 0 0 2px #000;
+}
+
+/* Estilos da seção Sobre o Autor */
+.about-author {
+    width: 100vw;
+    background: #181c23;
+    padding: 40px 0 0 0;
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+}
+
+.about-card {
+    background: #232a34;
+    border: 2.5px solid #ffd700;
+    border-radius: 18px 18px 0 0;
+    box-shadow: 0 -2px 16px #000a;
+    padding: 32px 36px 24px 36px;
+    max-width: 480px;
+    width: 100%;
+    color: #fff;
+    margin-bottom: 0;
+    text-align: left;
+}
+
+.about-card h3 {
+    color: #ffd700;
+    margin-bottom: 18px;
+    font-size: 1.5em;
+    font-weight: 700;
+    text-shadow: 0 2px 8px #000, 0 0 2px #000;
+}
+
+.about-card ul {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 18px 0;
+}
+
+.about-card li {
+    margin-bottom: 8px;
+    font-size: 1.08em;
+    color: #fff;
+    text-shadow: 0 1px 6px #000;
+}
+
+.about-card li strong {
+    color: #ffd700;
+    font-weight: 600;
+}
+
+.about-mission {
+    margin-top: 10px;
+    color: #ffd700;
+    font-size: 1.08em;
+    text-shadow: 0 1px 6px #000;
+}
+
+.about-mission span {
+    color: #fff;
+    font-weight: 400;
+    text-shadow: 0 1px 6px #000;
+}
+
+@media (max-width: 600px) {
+    .about-card {
+        padding: 18px 8vw 14px 8vw;
+        font-size: 0.98em;
+    }
+}
+
+#about-modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(24, 28, 35, 0.92);
+    justify-content: center;
+    align-items: center;
+}
+
+#about-modal.show {
+    display: flex;
+}
+
+.about-modal-content {
+    background: #232a34;
+    border: 2.5px solid #ffd700;
+    border-radius: 18px;
+    box-shadow: 0 4px 32px #000c;
+    padding: 32px 36px 24px 36px;
+    max-width: 480px;
+    width: 90vw;
+    color: #fff;
+    position: relative;
+    text-align: left;
+    animation: fadeIn 0.25s;
+}
+
+#about-modal .modal-close {
+    position: absolute;
+    top: 18px;
+    right: 22px;
+    color: #ffd700;
+    font-size: 2em;
+    font-weight: bold;
+    cursor: pointer;
+    text-shadow: 0 2px 8px #000, 0 0 2px #000;
+    z-index: 10;
+}
+
+@media (max-width: 600px) {
+    .about-modal-content {
+        padding: 18px 8vw 14px 8vw;
+        font-size: 0.98em;
+    }
 }
