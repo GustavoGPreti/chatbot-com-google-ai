@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Todos os Históricos</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="history-panel open" id="all-history-panel">
+    <div class="history-header">
+      <h3>📚 Todos os Históricos de Conversas</h3>
+      <button class="close-history" id="close-all-history" aria-label="Fechar" onclick="window.location.href='index.html'">
+        <svg stroke="currentColor" fill="none" stroke-width="2" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round" height="1em" width="1em" xmlns="http://www.w3.org/2000/svg">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+    <div class="history-content">
+      <div class="history-list-section">
+        <div class="history-controls">
+          <button id="refresh-all-history" class="refresh-button">Atualizar</button>
+        </div>
+        <div class="history-list" id="all-history-list">
+          <div class="loading-message">Carregando todos os históricos...</div>
+        </div>
+      </div>
+      <div class="history-detail-section" id="all-history-detail-section">
+        <div class="history-detail-header">
+          <h4>Detalhes da Conversa</h4>
+        </div>
+        <div class="history-detail-content" id="all-history-detail-content">
+          <div class="no-selection">Selecione uma conversa para ver os detalhes</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="all-history.js"></script>
+</body>
+</html>

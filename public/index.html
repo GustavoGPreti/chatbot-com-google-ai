@@ -138,6 +138,27 @@
             </div>
         </div>
     </div>
+
+        <!-- Modal de Login (inicialmente oculto, só aparece ao clicar em 'Ver todos históricos') -->
+        <div id="login-modal" class="modal" style="display:none;z-index:3000;">
+            <div class="modal-content login-modal-content">
+                <h3>Login</h3>
+                <form id="login-form" autocomplete="off">
+                    <label for="login-username">Usuário:</label>
+                    <input type="text" id="login-username" name="username" required autofocus autocomplete="username" />
+                    <label for="login-password">Senha:</label>
+                    <input type="password" id="login-password" name="password" required autocomplete="current-password" />
+                    <div class="modal-actions">
+                        <button type="submit" id="login-btn">Entrar</button>
+                    </div>
+                    <div id="login-error" style="color:#d32f2f;margin-top:10px;display:none;"></div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Botão para ver todos históricos (aparece no painel de histórico) -->
+        <button id="see-all-history" class="see-all-history-btn" style="margin: 16px auto 0 auto; display: block;">Ver todos históricos</button>
+
     <script src="app.js"></script>
 </body>
 

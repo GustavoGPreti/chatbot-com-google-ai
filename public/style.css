@@ -331,9 +331,13 @@ body {
 }
 
 .history-controls {
+    display: none;
     padding: 15px 20px;
     border-bottom: 1.5px solid #2e3a4b;
     background: #232a34;
+}
+.history-panel.open .history-controls {
+    display: block;
 }
 
 .refresh-button {
@@ -851,4 +855,84 @@ body {
         padding: 18px 8vw 14px 8vw;
         font-size: 0.98em;
     }
+}
+
+/* Estilos para o modal de login */
+#login-modal {
+    display: flex;
+    position: fixed;
+    z-index: 3000;
+    left: 0;
+    top: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(24,28,35,0.97);
+    justify-content: center;
+    align-items: center;
+}
+
+.login-modal-content {
+    background: #232a34;
+    border: 2.5px solid #ffd700;
+    border-radius: 18px;
+    box-shadow: 0 4px 32px #000c;
+    padding: 32px 36px 24px 36px;
+    max-width: 350px;
+    width: 90vw;
+    color: #fff;
+    position: relative;
+    text-align: left;
+    animation: fadeIn 0.25s;
+}
+
+#login-form label {
+    display: block;
+    margin-top: 12px;
+    color: #ffd700;
+    font-weight: 600;
+    text-shadow: 0 1px 6px #000;
+}
+
+#login-form input[type="text"],
+#login-form input[type="password"] {
+    width: 100%;
+    padding: 10px 12px;
+    margin-top: 4px;
+    border-radius: 8px;
+    border: 1.5px solid #ffd700;
+    background: #181c23;
+    color: #fff;
+    font-size: 1.08em;
+    margin-bottom: 8px;
+    outline: none;
+}
+
+#login-form input[type="text"]:focus,
+#login-form input[type="password"]:focus {
+    border-color: #1e7c3a;
+}
+
+#login-btn {
+    background: #1e7c3a;
+    color: #ffd700;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 22px;
+    font-weight: bold;
+    font-size: 1.1em;
+    margin-top: 16px;
+    cursor: pointer;
+    box-shadow: 0 2px 8px #000a;
+    transition: background 0.2s, color 0.2s;
+}
+
+#login-btn:hover {
+    background: #ffd700;
+    color: #1e7c3a;
+}
+
+#login-error {
+    color: #d32f2f;
+    font-weight: bold;
+    text-align: center;
 }

@@ -5,7 +5,14 @@ const mongoose = require('mongoose');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const axios = require('axios');
+const bodyParser = require('body-parser');
 require('dotenv').config();
+// Usuários de exemplo para autenticação
+const USERS = [
+    { userId: 'admin', username: 'admin', password: 'admin123', isAdmin: true },
+    { userId: 'user1', username: 'user1', password: 'senha1', isAdmin: false },
+    { userId: 'user2', username: 'user2', password: 'senha2', isAdmin: false }
+];
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -72,6 +79,7 @@ app.use(cors({
     credentials: true
 }));
 app.use(express.json());
+// app.use(bodyParser.json());
 
 // Log middleware para debug
 app.use((req, res, next) => {
@@ -894,6 +902,29 @@ app.get('/api/chat/historicos/:sessionId', async (req, res) => {
         console.error('❌ Erro geral ao buscar sessão:', error);
         res.status(500).json({ error: 'Erro interno do servidor' });
     }
+});
+
+// Endpoint de login
+app.post('/api/login', (req, res) => {
+    const { username, password } = req.body;
+    const user = USERS.find(u => u.username === username && u.password === password);
+    if (!user) {
+        return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
+    }
+    res.json({ user: { userId: user.userId, username: user.username, isAdmin: user.isAdmin } });
+});
+
+// Endpoint de históricos (GET) - filtra por userId, exceto admin
+app.get('/api/chat/historicos', (req, res) => {
+  let historicos = [];
+  try {
+    historicos = JSON.parse(fs.readFileSync(path.join(__dirname, 'logs', 'connection_logs.json')));
+  } catch (e) {}
+  const { userId } = req.query;
+  if (userId && userId !== 'admin') {
+    historicos = historicos.filter(h => h.userId === userId);
+  }
+  res.json(historicos);
 });
 
 // Handle errors globally

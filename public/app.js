@@ -1019,3 +1019,77 @@ document.addEventListener('DOMContentLoaded', () => {
         openHistoryBtn.addEventListener('click', toggleHistoryPanel);
     }
 });
+
+// =============== FUNCIONALIDADES DE LOGIN ===============
+
+let currentUser = null;
+
+function showLoginModal() {
+    document.getElementById('login-modal').style.display = 'flex';
+    document.getElementById('login-form').reset();
+    document.getElementById('login-error').textContent = '';
+}
+
+function hideLoginModal() {
+    document.getElementById('login-modal').style.display = 'none';
+}
+
+async function handleLogin(e) {
+    e.preventDefault();
+    const username = document.getElementById('login-username').value.trim();
+    const password = document.getElementById('login-password').value;
+    const errorDiv = document.getElementById('login-error');
+    errorDiv.textContent = '';
+    try {
+        const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        if (!res.ok) {
+            const data = await res.json();
+            errorDiv.textContent = data.error || 'Usuário ou senha inválidos.';
+            return;
+        }
+        const data = await res.json();
+        currentUser = data.user; // { userId, username, isAdmin }
+        hideLoginModal();
+        // Redireciona para página de todos históricos
+        window.location.href = 'all-history.html';
+    } catch (err) {
+        errorDiv.textContent = 'Erro de conexão. Tente novamente.';
+    }
+}
+
+function enableChatUI() {
+    document.getElementById('chat-input').disabled = false;
+    document.getElementById('send-btn').disabled = false;
+    // ...habilite outros elementos se necessário...
+}
+
+function disableChatUI() {
+    document.getElementById('chat-input').disabled = true;
+    document.getElementById('send-btn').disabled = true;
+    // ...desabilite outros elementos se necessário...
+}
+
+
+// Exibe modal de login apenas ao clicar em 'Ver todos históricos'
+window.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('login-modal').style.display = 'none';
+    document.getElementById('see-all-history').addEventListener('click', () => {
+        showLoginModal();
+    });
+    document.getElementById('login-form').addEventListener('submit', handleLogin);
+});
+
+// Modifique loadHistoricos para enviar userId se necessário
+async function loadHistoricos() {
+    if (!currentUser) return;
+    let url = '/api/chat/historicos';
+    if (!currentUser.isAdmin) {
+        url += `?userId=${encodeURIComponent(currentUser.userId)}`;
+    }
+    const res = await fetch(url);
+    // ...restante da função...
+}
