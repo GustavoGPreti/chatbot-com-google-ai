@@ -1,331 +1,88 @@
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
-const mongoose = require('mongoose');
-const { MongoClient } = require('mongodb');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const axios = require('axios');
-const bodyParser = require('body-parser');
-require('dotenv').config();
-// Usuários de exemplo para autenticação
-const USERS = [
-    { userId: 'admin', username: 'admin', password: 'admin123', isAdmin: true },
-    { userId: 'user1', username: 'user1', password: 'senha1', isAdmin: false },
-    { userId: 'user2', username: 'user2', password: 'senha2', isAdmin: false }
-];
+// Mongoose models
+const mongooseConfigSchema = new mongoose.Schema({
+    key: { type: String, required: true, unique: true },
+    value: { type: String, required: true }
+});
+const Config = mongoose.model('Config', mongooseConfigSchema);
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+const mongooseChatSchema = new mongoose.Schema({
+    sessionId: String,
+    userId: String,
+    botId: String,
+    startTime: Date,
+    endTime: Date,
+    messages: Array,
+    loggedAt: Date,
+    titulo: String
+});
+const Chat = mongoose.model('Chat', mongooseChatSchema);
 
-// Múltiplas conexões MongoDB
-let dbLogs = null; // DB compartilhado para logs simples
-let dbHistoria = null; // DB individual para histórico de sessões
-
-// Função genérica para conectar ao MongoDB
-async function connectToMongoDB(uri, dbName) {
+// Middleware de proteção admin usando senha do banco
+async function requireAdminAuth(req, res, next) {
+    const provided = req.headers['authorization'];
     try {
-        const client = new MongoClient(uri, {
-            serverSelectionTimeoutMS: 5000,
-            socketTimeoutMS: 45000,
-        });
-        await client.connect();
-        console.log(`✅ Conectado ao MongoDB: ${dbName}`);
-        return client.db(dbName);
-    } catch (error) {
-        console.error(`❌ Erro ao conectar ao MongoDB ${dbName}:`, error.message);
-        return null;
+        const config = await Config.findOne({ key: 'adminSecret' });
+        const secret = config?.value;
+        if (!secret || provided !== secret) {
+            return res.status(403).json({ error: 'Acesso negado' });
+        }
+        next();
+    } catch (err) {
+        return res.status(500).json({ error: 'Erro ao validar autenticação admin' });
     }
 }
 
-// Inicializar conexões
-async function initializeDatabases() {
-    // Conexão para logs (DB compartilhado)
-    if (process.env.MONGO_URI_LOGS) {
-        dbLogs = await connectToMongoDB(process.env.MONGO_URI_LOGS, 'IIW2023A_Logs');
-    }
-    
-    // Conexão para histórico de sessões (DB individual)
-    if (process.env.MONGO_URI_HISTORIA) {
-        dbHistoria = await connectToMongoDB(process.env.MONGO_URI_HISTORIA, 'HistoricoChats');
-    }
-    
-    console.log('🚀 Inicialização das conexões MongoDB concluída');
-}
-
-// Inicializar conexões na inicialização do servidor
-initializeDatabases();
-
-// MongoDB Connection (mantido para compatibilidade)
-mongoose.connect(process.env.MONGODB_URI || process.env.MONGO_URI_LOGS, {
-    serverSelectionTimeoutMS: 5000,
-    socketTimeoutMS: 45000,
-})
-.then(() => {
-    console.log('✅ Mongoose conectado ao MongoDB Atlas!');
-})
-.catch((error) => {
-    console.error('❌ MongoDB connection error:', error.message);
-    console.log('⚠️ Continuando sem MongoDB - logs serão salvos localmente');
-});
-
-// Middleware para verificar status do MongoDB
-function isMongoConnected() {
-    return mongoose.connection.readyState === 1 || dbLogs !== null;
-}
-
-// Middleware
-app.use(cors({
-    origin: ['http://localhost:3000', 'http://127.0.0.1:3000'],
-    credentials: true
-}));
-app.use(express.json());
-// app.use(bodyParser.json());
-
-// Log middleware para debug
-app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
-    next();
-});
-
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Initialize Gemini AI
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY;
-
-// Route to serve index.html
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Chat history storage (in memory - for demonstration purposes)
-const chatHistories = new Map();
-
-// Array para simular dados de ranking (em memória)
-let dadosRankingVitrine = [];
-
-// Get weather data
-async function getWeather(location) {
-    const url = `https://api.openweathermap.org/data/2.5/weather?q=${location}&appid=${OPENWEATHER_API_KEY}&units=metric&lang=pt_br`;
+// Endpoint para login admin (valida senha)
+app.post('/api/admin/login', async (req, res) => {
+    const { password } = req.body;
     try {
-        const response = await axios.get(url);
-        return {
-            location: response.data.name,
-            temperature: response.data.main.temp,
-            description: response.data.weather[0].description
-        };
-    } catch (error) {
-        console.error("Error calling OpenWeatherMap:", error.response?.data || error.message);
-        return { error: "Could not get weather data." };
-    }
-}
-
-// Get system instruction
-function getSystemInstruction(climate) {
-    const climateText = climate && !climate.error
-        ? `No seu local (${climate.location}), agora faz ${climate.temperature}°C com ${climate.description}.`
-        : `Não foi possível obter os dados do clima do seu local.`;
-
-    return `
-Você é o Mestre dos Prognósticos, um guru lendário das apostas esportivas em um universo onde os placares definem o destino de todos.
-Com linguagem ousada e tom confiante, seu papel é entreter e motivar os apostadores com dicas ousadas, sempre lembrando que o jogo é parte da diversão.
-A data e hora atuais são ${new Date().toLocaleString()}.
-suas respostas nao devem conter *, sem negrito ou italico
-${climateText}
-`;
-}
-
-// Chat endpoint
-app.post('/api/chat', async (req, res) => {
-    const { message, sessionId } = req.body;
-    
-    try {
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        
-        // Get or create chat history for this session
-        if (!chatHistories.has(sessionId)) {
-            chatHistories.set(sessionId, []);
+        const config = await Config.findOne({ key: 'adminSecret' });
+        const secret = config?.value;
+        if (!secret || password !== secret) {
+            return res.status(403).json({ error: 'Senha incorreta' });
         }
-        const chatHistory = chatHistories.get(sessionId);
-
-        const chat = model.startChat({
-            history: chatHistory,
-            generationConfig: {
-                temperature: 0.7,
-                topK: 40,
-                topP: 0.95,
-                maxOutputTokens: 1000
-            },
-            safetySettings: [
-                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }
-            ]
-        });
-
-        // Get weather for system instruction
-        const weather = await getWeather("São Paulo"); // Default to São Paulo
-        const systemInstruction = getSystemInstruction(weather);
-
-        const result = await chat.sendMessage(systemInstruction + "\nUsuário: " + message);
-        const response = await result.response;
-        const responseText = response.text();
-
-        // Update chat history
-        chatHistory.push({ role: "user", parts: [{ text: message }] });
-        chatHistory.push({ role: "model", parts: [{ text: responseText }] });
-
-        res.json({ 
-            message: responseText,
-            weather: weather
-        });
-    } catch (error) {
-        console.error('Error:', error);
-        res.status(500).json({ error: error.message });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Erro ao validar senha admin' });
     }
 });
 
-// Clear chat history endpoint
-app.post('/api/clear-chat', (req, res) => {
-    const { sessionId } = req.body;
-    chatHistories.delete(sessionId);
-    res.json({ message: 'Chat history cleared' });
+// Endpoint: GET /api/admin/stats
+app.get('/api/admin/stats', requireAdminAuth, async (req, res) => {
+    try {
+        const totalConversas = await Chat.countDocuments();
+        const chats = await Chat.find({}, { messages: 1 }).lean();
+        const totalMensagens = chats.reduce((acc, chat) => acc + (chat.messages?.length || 0), 0);
+        const ultimasConversas = await Chat.find().sort({ loggedAt: -1 }).limit(5).lean();
+        res.json({ totalConversas, totalMensagens, ultimasConversas });
+    } catch (err) {
+        res.status(500).json({ error: 'Erro ao buscar estatísticas' });
+    }
 });
 
-// NOVO ENDPOINT B2.P1.A8 - Salvar histórico completo de sessão
-app.post('/api/chat/salvar-historico', async (req, res) => {
+// Endpoint: GET /api/admin/system-instruction
+app.get('/api/admin/system-instruction', requireAdminAuth, async (req, res) => {
     try {
-        const { sessionId, userId, botId, messages, startTime, endTime } = req.body;
+        const config = await Config.findOne({ key: 'systemInstruction' });
+        res.json({ instruction: config?.value || '' });
+    } catch (err) {
+        res.status(500).json({ error: 'Erro ao buscar instrução' });
+    }
+});
 
-        // Validação dos dados obrigatórios
-        if (!sessionId || !botId || !messages || !Array.isArray(messages)) {
-            return res.status(400).json({ 
-                error: "Dados incompletos. sessionId, botId e messages (array) são obrigatórios." 
-            });
-        }
-
-        if (messages.length === 0) {
-            return res.status(400).json({ 
-                error: "O array de messages não pode estar vazio." 
-            });
-        }
-
-        // Estrutura dos dados para salvar
-        const sessionData = {
-            sessionId: sessionId,
-            userId: userId || null,
-            botId: botId,
-            startTime: startTime ? new Date(startTime) : new Date(),
-            endTime: endTime ? new Date(endTime) : new Date(),
-            messages: messages,
-            loggedAt: new Date()
-        };
-
-        // Tentar salvar no MongoDB individual
-        if (dbHistoria) {
-            try {
-                const collection = dbHistoria.collection("sessoesChat");
-                const result = await collection.insertOne(sessionData);
-                
-                console.log('✅ Histórico de sessão salvo no MongoDB:', {
-                    sessionId: sessionId,
-                    botId: botId,
-                    messagesCount: messages.length,
-                    insertedId: result.insertedId
-                });
-
-                res.json({
-                    success: true,
-                    message: 'Histórico de sessão salvo com sucesso no MongoDB',
-                    sessionId: sessionId,
-                    insertedId: result.insertedId,
-                    messagesCount: messages.length,
-                    storage: 'mongodb_individual'
-                });
-            } catch (dbError) {
-                console.error('❌ Erro ao salvar histórico no MongoDB:', dbError.message);
-                
-                // Fallback: salvar localmente
-                const fs = require('fs');
-                const logsDir = path.join(__dirname, 'logs');
-                const historicFile = path.join(logsDir, 'historic_sessions.json');
-                
-                try {
-                    if (!fs.existsSync(logsDir)) {
-                        fs.mkdirSync(logsDir, { recursive: true });
-                    }
-                    
-                    let sessions = [];
-                    if (fs.existsSync(historicFile)) {
-                        sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
-                    }
-                    
-                    sessions.push(sessionData);
-                    
-                    // Manter apenas as últimas 100 sessões
-                    if (sessions.length > 100) {
-                        sessions.splice(0, sessions.length - 100);
-                    }
-                    
-                    fs.writeFileSync(historicFile, JSON.stringify(sessions, null, 2));
-                    
-                    console.log('📁 Histórico salvo localmente como fallback');
-                    
-                    res.json({
-                        success: true,
-                        message: 'Histórico salvo localmente (fallback)',
-                        sessionId: sessionId,
-                        messagesCount: messages.length,
-                        storage: 'local_file_fallback'
-                    });
-                } catch (fileError) {
-                    console.error('❌ Erro ao salvar arquivo local:', fileError.message);
-                    res.status(500).json({ error: 'Erro ao salvar histórico' });
-                }
-            }
-        } else {
-            // Se não há conexão com MongoDB, salvar apenas localmente
-            const fs = require('fs');
-            const logsDir = path.join(__dirname, 'logs');
-            const historicFile = path.join(logsDir, 'historic_sessions.json');
-            
-            try {
-                if (!fs.existsSync(logsDir)) {
-                    fs.mkdirSync(logsDir, { recursive: true });
-                }
-                
-                let sessions = [];
-                if (fs.existsSync(historicFile)) {
-                    sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
-                }
-                
-                sessions.push(sessionData);
-                
-                // Manter apenas as últimas 100 sessões
-                if (sessions.length > 100) {
-                    sessions.splice(0, sessions.length - 100);
-                }
-                
-                fs.writeFileSync(historicFile, JSON.stringify(sessions, null, 2));
-                
-                console.log('📁 Histórico salvo localmente (sem MongoDB)');
-                
-                res.json({
-                    success: true,
-                    message: 'Histórico salvo localmente (MongoDB indisponível)',
-                    sessionId: sessionId,
-                    messagesCount: messages.length,
-                    storage: 'local_file_only'
-                });
-            } catch (fileError) {
-                console.error('❌ Erro ao salvar arquivo local:', fileError.message);
-                res.status(500).json({ error: 'Erro ao salvar histórico' });
-            }
-        }
-    } catch (error) {
-        console.error('❌ Erro geral ao salvar histórico:', error);
-        res.status(500).json({ error: 'Erro interno do servidor ao salvar histórico' });
+// Endpoint: POST /api/admin/system-instruction
+app.post('/api/admin/system-instruction', requireAdminAuth, async (req, res) => {
+    try {
+        const { instruction } = req.body;
+        if (!instruction) return res.status(400).json({ error: 'Instrução obrigatória' });
+        await Config.findOneAndUpdate(
+            { key: 'systemInstruction' },
+            { value: instruction },
+            { upsert: true }
+        );
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Erro ao atualizar instrução' });
     }
 });
 
@@ -355,30 +112,30 @@ app.post('/api/log-connection', async (req, res) => {
             try {
                 const db = mongoose.connection.db;
                 const collection = db.collection("tb_cl_user_log_acess");
-                
+
                 const result = await collection.insertOne(logEntry);
-                
-                res.json({ 
-                    success: true, 
+
+                res.json({
+                    success: true,
                     message: 'Log registrado com sucesso no MongoDB',
-                    insertedId: result.insertedId 
+                    insertedId: result.insertedId
                 });
             } catch (dbError) {
                 console.error('Erro ao salvar no MongoDB:', dbError.message);
                 console.log('Salvando log localmente:', logEntry);
-                res.json({ 
-                    success: true, 
+                res.json({
+                    success: true,
                     message: 'Log registrado localmente (erro no MongoDB)',
-                    data: logEntry 
+                    data: logEntry
                 });
             }
         } else {
             // Log local se MongoDB não estiver disponível
             console.log('Log registrado localmente (MongoDB indisponível):', logEntry);
-            res.json({ 
-                success: true, 
+            res.json({
+                success: true,
                 message: 'Log registrado localmente (MongoDB indisponível)',
-                data: logEntry 
+                data: logEntry
             });
         }
     } catch (error) {
@@ -389,11 +146,11 @@ app.post('/api/log-connection', async (req, res) => {
 
 // User info endpoint (para obter IP do cliente)
 app.get('/api/user-info', (req, res) => {
-    const ip = req.headers['x-forwarded-for'] || 
-               req.connection.remoteAddress || 
-               req.socket.remoteAddress ||
-               (req.connection.socket ? req.connection.socket.remoteAddress : null);
-    
+    const ip = req.headers['x-forwarded-for'] ||
+        req.connection.remoteAddress ||
+        req.socket.remoteAddress ||
+        (req.connection.socket ? req.connection.socket.remoteAddress : null);
+
     res.json({ ip: ip });
 });
 
@@ -444,9 +201,9 @@ app.post('/api/ranking/registrar-acesso-bot', (req, res) => {
 
         console.log('[Servidor] Dados de ranking atualizados:', dadosRankingVitrine);
 
-        res.status(201).json({ 
+        res.status(201).json({
             message: `Acesso ao bot ${nomeBot} registrado para ranking.`,
-            ranking: dadosRankingVitrine 
+            ranking: dadosRankingVitrine
         });
     } catch (error) {
         console.error('Erro ao registrar acesso no ranking:', error);
@@ -470,23 +227,23 @@ app.get('/api/ranking/visualizar', (req, res) => {
 app.get('/api/chat/historico', async (req, res) => {
     try {
         const { limit = 10, sessionId } = req.query;
-        
+
         // Tentar buscar no MongoDB primeiro
         if (dbHistoria) {
             try {
                 const collection = dbHistoria.collection("sessoesChat");
                 let query = {};
-                
+
                 if (sessionId) {
                     query.sessionId = sessionId;
                 }
-                
+
                 const sessions = await collection
                     .find(query)
                     .sort({ loggedAt: -1 })
                     .limit(parseInt(limit))
                     .toArray();
-                
+
                 res.json({
                     success: true,
                     source: 'mongodb',
@@ -498,24 +255,24 @@ app.get('/api/chat/historico', async (req, res) => {
                 console.error('❌ Erro ao buscar histórico no MongoDB:', dbError.message);
             }
         }
-        
+
         // Fallback para arquivo local
         const fs = require('fs');
         const historicFile = path.join(__dirname, 'logs', 'historic_sessions.json');
-        
+
         try {
             if (fs.existsSync(historicFile)) {
                 let sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
-                
+
                 if (sessionId) {
                     sessions = sessions.filter(s => s.sessionId === sessionId);
                 }
-                
+
                 // Ordenar por data mais recente e limitar
                 sessions = sessions
                     .sort((a, b) => new Date(b.loggedAt) - new Date(a.loggedAt))
                     .slice(0, parseInt(limit));
-                
+
                 res.json({
                     success: true,
                     source: 'local_file',
@@ -545,13 +302,13 @@ app.get('/api/chat/historico', async (req, res) => {
 app.delete('/api/chat/historicos/:sessionId', async (req, res) => {
     try {
         const { sessionId } = req.params;
-        
+
         // Tentar deletar no MongoDB primeiro
         if (dbHistoria) {
             try {
                 const collection = dbHistoria.collection("sessoesChat");
                 const result = await collection.deleteOne({ sessionId: sessionId });
-                
+
                 if (result.deletedCount === 1) {
                     console.log(`✅ Sessão ${sessionId} excluída do MongoDB`);
                     res.json({
@@ -564,18 +321,18 @@ app.delete('/api/chat/historicos/:sessionId', async (req, res) => {
                 console.error('❌ Erro ao excluir do MongoDB:', dbError.message);
             }
         }
-        
+
         // Fallback para arquivo local
         const fs = require('fs');
         const historicFile = path.join(__dirname, 'logs', 'historic_sessions.json');
-        
+
         try {
             if (fs.existsSync(historicFile)) {
                 let sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
                 const initialLength = sessions.length;
-                
+
                 sessions = sessions.filter(s => s.sessionId !== sessionId);
-                
+
                 if (sessions.length < initialLength) {
                     fs.writeFileSync(historicFile, JSON.stringify(sessions, null, 2));
                     console.log(`✅ Sessão ${sessionId} excluída do arquivo local`);
@@ -587,7 +344,7 @@ app.delete('/api/chat/historicos/:sessionId', async (req, res) => {
                     return;
                 }
             }
-            
+
             throw new Error('Sessão não encontrada');
         } catch (fileError) {
             console.error('❌ Erro ao manipular arquivo local:', fileError.message);
@@ -603,15 +360,15 @@ app.delete('/api/chat/historicos/:sessionId', async (req, res) => {
 app.get('/api/chat/historicos/:sessionId/gerar-titulo', async (req, res) => {
     try {
         const { sessionId } = req.params;
-        
+
         // Buscar a sessão primeiro
         let session;
-        
+
         if (dbHistoria) {
             const collection = dbHistoria.collection("sessoesChat");
             session = await collection.findOne({ sessionId: sessionId });
         }
-        
+
         if (!session) {
             // Tentar arquivo local
             const fs = require('fs');
@@ -621,17 +378,17 @@ app.get('/api/chat/historicos/:sessionId/gerar-titulo', async (req, res) => {
                 session = sessions.find(s => s.sessionId === sessionId);
             }
         }
-        
+
         if (!session) {
             throw new Error('Sessão não encontrada');
         }
-        
+
         // Gerar prompt para o Gemini
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-        
+
         const primeiraMensagem = session.messages[0].parts[0].text;
         const ultimaMensagem = session.messages[session.messages.length - 1].parts[0].text;
-        
+
         const prompt = `
         Analise esta conversa e sugira um título curto e descritivo (máximo 50 caracteres).
         
@@ -645,15 +402,15 @@ app.get('/api/chat/historicos/:sessionId/gerar-titulo', async (req, res) => {
         
         Responda APENAS com o título sugerido, sem explicações ou formatações adicionais.
         `;
-        
+
         const result = await model.generateContent(prompt);
         const tituloSugerido = result.response.text().trim();
-        
+
         res.json({
             success: true,
             tituloSugerido: tituloSugerido
         });
-        
+
     } catch (error) {
         console.error('❌ Erro ao gerar título:', error);
         res.status(500).json({ error: 'Erro ao gerar título' });
@@ -665,11 +422,11 @@ app.put('/api/chat/historicos/:sessionId/atualizar-titulo', async (req, res) => 
     try {
         const { sessionId } = req.params;
         const { titulo } = req.body;
-        
+
         if (!titulo) {
             return res.status(400).json({ error: 'Título é obrigatório' });
         }
-        
+
         // Tentar atualizar no MongoDB primeiro
         if (dbHistoria) {
             try {
@@ -678,7 +435,7 @@ app.put('/api/chat/historicos/:sessionId/atualizar-titulo', async (req, res) => 
                     { sessionId: sessionId },
                     { $set: { titulo: titulo } }
                 );
-                
+
                 if (result.modifiedCount === 1) {
                     console.log(`✅ Título atualizado no MongoDB para sessão ${sessionId}`);
                     res.json({
@@ -691,20 +448,20 @@ app.put('/api/chat/historicos/:sessionId/atualizar-titulo', async (req, res) => 
                 console.error('❌ Erro ao atualizar título no MongoDB:', dbError.message);
             }
         }
-        
+
         // Fallback para arquivo local
         const fs = require('fs');
         const historicFile = path.join(__dirname, 'logs', 'historic_sessions.json');
-        
+
         try {
             if (fs.existsSync(historicFile)) {
                 let sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
                 const session = sessions.find(s => s.sessionId === sessionId);
-                
+
                 if (session) {
                     session.titulo = titulo;
                     fs.writeFileSync(historicFile, JSON.stringify(sessions, null, 2));
-                    
+
                     console.log(`✅ Título atualizado no arquivo local para sessão ${sessionId}`);
                     res.json({
                         success: true,
@@ -714,7 +471,7 @@ app.put('/api/chat/historicos/:sessionId/atualizar-titulo', async (req, res) => 
                     return;
                 }
             }
-            
+
             throw new Error('Sessão não encontrada');
         } catch (fileError) {
             console.error('❌ Erro ao manipular arquivo local:', fileError.message);
@@ -730,25 +487,25 @@ app.put('/api/chat/historicos/:sessionId/atualizar-titulo', async (req, res) => 
 app.get('/api/chat/historicos', async (req, res) => {
     try {
         const { limit = 10, sortBy = 'startTime', order = 'desc' } = req.query;
-        
+
         console.log('📖 Buscando históricos de conversas...');
-        
+
         // Tentar buscar no MongoDB primeiro
         if (dbHistoria) {
             try {
                 const collection = dbHistoria.collection("sessoesChat");
-                
+
                 // Configurar ordenação
                 const sortOrder = order === 'asc' ? 1 : -1;
                 const sortOptions = {};
                 sortOptions[sortBy] = sortOrder;
-                
+
                 const sessions = await collection
                     .find({})
                     .sort(sortOptions)
                     .limit(parseInt(limit))
                     .toArray();
-                
+
                 // Formatar dados para exibição
                 const formattedSessions = sessions.map(session => ({
                     _id: session._id,
@@ -757,15 +514,15 @@ app.get('/api/chat/historicos', async (req, res) => {
                     startTime: session.startTime,
                     endTime: session.endTime,
                     messageCount: session.messages ? session.messages.length : 0,
-                    duration: session.startTime && session.endTime ? 
+                    duration: session.startTime && session.endTime ?
                         Math.round((new Date(session.endTime) - new Date(session.startTime)) / 1000) : 0,
                     loggedAt: session.loggedAt,
-                    preview: session.messages && session.messages.length > 0 ? 
+                    preview: session.messages && session.messages.length > 0 ?
                         session.messages[0].parts[0].text.substring(0, 100) + '...' : 'Sem mensagens'
                 }));
-                
+
                 console.log(`✅ Encontradas ${sessions.length} sessões no MongoDB`);
-                
+
                 res.json({
                     success: true,
                     source: 'mongodb',
@@ -777,15 +534,15 @@ app.get('/api/chat/historicos', async (req, res) => {
                 console.error('❌ Erro ao buscar no MongoDB:', dbError.message);
             }
         }
-        
+
         // Fallback para arquivo local
         const fs = require('fs');
         const historicFile = path.join(__dirname, 'logs', 'historic_sessions.json');
-        
+
         try {
             if (fs.existsSync(historicFile)) {
                 let sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
-                
+
                 // Aplicar ordenação e limite
                 const sortOrder = order === 'asc' ? 1 : -1;
                 sessions = sessions
@@ -795,7 +552,7 @@ app.get('/api/chat/historicos', async (req, res) => {
                         return sortOrder * (bVal - aVal);
                     })
                     .slice(0, parseInt(limit));
-                
+
                 // Formatar dados
                 const formattedSessions = sessions.map(session => ({
                     sessionId: session.sessionId,
@@ -803,15 +560,15 @@ app.get('/api/chat/historicos', async (req, res) => {
                     startTime: session.startTime,
                     endTime: session.endTime,
                     messageCount: session.messages ? session.messages.length : 0,
-                    duration: session.startTime && session.endTime ? 
+                    duration: session.startTime && session.endTime ?
                         Math.round((new Date(session.endTime) - new Date(session.startTime)) / 1000) : 0,
                     loggedAt: session.loggedAt,
-                    preview: session.messages && session.messages.length > 0 ? 
+                    preview: session.messages && session.messages.length > 0 ?
                         session.messages[0].parts[0].text.substring(0, 100) + '...' : 'Sem mensagens'
                 }));
-                
+
                 console.log(`✅ Encontradas ${sessions.length} sessões no arquivo local`);
-                
+
                 res.json({
                     success: true,
                     source: 'local_file',
@@ -841,15 +598,15 @@ app.get('/api/chat/historicos', async (req, res) => {
 app.get('/api/chat/historicos/:sessionId', async (req, res) => {
     try {
         const { sessionId } = req.params;
-        
+
         console.log(`📖 Buscando detalhes da sessão: ${sessionId}`);
-        
+
         // Tentar buscar no MongoDB primeiro
         if (dbHistoria) {
             try {
                 const collection = dbHistoria.collection("sessoesChat");
                 const session = await collection.findOne({ sessionId: sessionId });
-                
+
                 if (session) {
                     console.log(`✅ Sessão encontrada no MongoDB: ${session.messages.length} mensagens`);
                     res.json({
@@ -865,16 +622,16 @@ app.get('/api/chat/historicos/:sessionId', async (req, res) => {
                 console.error('❌ Erro ao buscar no MongoDB:', dbError.message);
             }
         }
-        
+
         // Fallback para arquivo local
         const fs = require('fs');
         const historicFile = path.join(__dirname, 'logs', 'historic_sessions.json');
-        
+
         try {
             if (fs.existsSync(historicFile)) {
                 const sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8'));
                 const session = sessions.find(s => s.sessionId === sessionId);
-                
+
                 if (session) {
                     console.log(`✅ Sessão encontrada no arquivo local: ${session.messages.length} mensagens`);
                     res.json({
@@ -916,15 +673,15 @@ app.post('/api/login', (req, res) => {
 
 // Endpoint de históricos (GET) - filtra por userId, exceto admin
 app.get('/api/chat/historicos', (req, res) => {
-  let historicos = [];
-  try {
-    historicos = JSON.parse(fs.readFileSync(path.join(__dirname, 'logs', 'connection_logs.json')));
-  } catch (e) {}
-  const { userId } = req.query;
-  if (userId && userId !== 'admin') {
-    historicos = historicos.filter(h => h.userId === userId);
-  }
-  res.json(historicos);
+    let historicos = [];
+    try {
+        historicos = JSON.parse(fs.readFileSync(path.join(__dirname, 'logs', 'connection_logs.json')));
+    } catch (e) { }
+    const { userId } = req.query;
+    if (userId && userId !== 'admin') {
+        historicos = historicos.filter(h => h.userId === userId);
+    }
+    res.json(historicos);
 });
 
 // Handle errors globally
