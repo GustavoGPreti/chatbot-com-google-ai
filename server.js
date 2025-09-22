@@ -1,3 +1,140 @@
+// Bootstrap e dependências
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const path = require('path');
+const fs = require('fs');
+const mongoose = require('mongoose');
+const { MongoClient } = require('mongodb');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const crypto = require('crypto');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Conexões MongoDB
+let mongoClient; // Native driver
+let dbHistoria = null;
+let dbLogs = null;
+
+async function connectMongo() {
+    const uri = process.env.MONGODB_URI;
+    if (!uri) {
+        console.warn('MONGODB_URI não definido. Recursos dependentes podem falhar.');
+        return;
+    }
+    try {
+        mongoClient = new MongoClient(uri, {});
+        await mongoClient.connect();
+        // Databases padrão (ajuste via env se necessário)
+        const historiaDbName = process.env.HISTORIA_DB_NAME || 'HistoricoChats';
+        const logsDbName = process.env.LOGS_DB_NAME || 'IIW2023A_Logs';
+        dbHistoria = mongoClient.db(historiaDbName);
+        dbLogs = mongoClient.db(logsDbName);
+        console.log(`MongoClient conectado. DBs: ${historiaDbName}, ${logsDbName}`);
+    } catch (err) {
+        console.error('Falha ao conectar MongoClient:', err.message);
+    }
+}
+
+function isMongoConnected() {
+    // Considera conectado se mongoose ou mongoClient indicarem conectividade
+    const mConn = mongoose.connection && mongoose.connection.readyState === 1; // 1 = connected
+    const nConn = mongoClient && mongoClient.topology && mongoClient.topology.isConnected();
+    return !!(mConn || nConn);
+}
+
+// Conexão Mongoose (para modelos)
+async function connectMongoose() {
+    const uri = process.env.MONGODB_URI;
+    if (!uri) return;
+    try {
+        await mongoose.connect(uri, { dbName: process.env.MONGOOSE_DB_NAME || 'HistoricoChats' });
+        console.log('Mongoose conectado.');
+    } catch (err) {
+        console.error('Falha ao conectar Mongoose:', err.message);
+    }
+}
+
+// Inicializa Google Generative AI (sem verificação)
+let genAI = null;
+try {
+    genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+    console.log('genAI inicializado.');
+} catch (err) {
+    console.error('Falha ao inicializar genAI:', err.message);
+    genAI = null;
+}
+
+// Dados em memória
+const dadosRankingVitrine = [];
+const USERS = [];
+const chatHistories = new Map();
+
+// Instrução de sistema padrão com clima
+function getSystemInstruction(climate) {
+    const climateText = climate && !climate.error
+        ? `No seu local (${climate.location}), agora faz ${climate.temperature}°C com ${climate.description}.`
+        : `Não foi possível obter os dados do clima do seu local.`;
+    return `Você é o Mestre dos Prognósticos, um guru das apostas esportivas. Responda de forma confiante e objetiva, sem usar negrito/itálico ou caracteres especiais como *.
+Data/hora: ${new Date().toLocaleString()}
+${climateText}`;
+}
+
+// Endpoint principal do chat
+app.post('/api/chat', async (req, res) => {
+    try {
+        const { message, sessionId } = req.body || {};
+        if (!message || !sessionId) {
+            return res.status(400).json({ error: 'message e sessionId são obrigatórios' });
+        }
+        if (!genAI) {
+            return res.status(503).json({ error: 'Serviço de IA indisponível' });
+        }
+
+        // Carregar instrução global
+        let systemInstruction = '';
+        try {
+            const cfg = await Config.findOne({ key: 'systemInstruction' });
+            systemInstruction = cfg?.value || getSystemInstruction(await getWeather('São Paulo'));
+        } catch (e) {
+            systemInstruction = getSystemInstruction(await getWeather('São Paulo'));
+        }
+
+        // Obter histórico
+        if (!chatHistories.has(sessionId)) chatHistories.set(sessionId, []);
+        const history = chatHistories.get(sessionId);
+
+        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        // Usar geração simples para reduzir falhas
+        const prompt = `${systemInstruction}\n\nUsuário: ${message}`;
+        const result = await model.generateContent(prompt);
+        const responseText = result.response.text();
+
+        // Atualiza histórico.
+        history.push({ role: 'user', parts: [{ text: message }] });
+        history.push({ role: 'model', parts: [{ text: responseText }] });
+
+        res.json({ message: responseText });
+    } catch (error) {
+        console.error('Erro no endpoint /api/chat:', error);
+        res.status(500).json({ error: 'Erro interno do servidor' });
+    }
+});
+
+// Limpar histórico de sessão
+app.post('/api/clear-chat', (req, res) => {
+    const { sessionId } = req.body || {};
+    if (!sessionId) return res.status(400).json({ error: 'sessionId é obrigatório' });
+    chatHistories.delete(sessionId);
+    res.json({ success: true });
+});
+
 // Mongoose models
 const mongooseConfigSchema = new mongoose.Schema({
     key: { type: String, required: true, unique: true },
@@ -17,16 +154,43 @@ const mongooseChatSchema = new mongoose.Schema({
 });
 const Chat = mongoose.model('Chat', mongooseChatSchema);
 
+// Helper: buscar senha admin do banco (Mongoose Config ou Native collection HistoricoChat.config)
+async function getAdminSecretFromConfig() {
+    // 1) Tenta via Mongoose (coleção configs)
+    try {
+        const cfg = await Config.findOne({ key: 'adminSecret' });
+        if (cfg?.value) return cfg.value;
+    } catch { }
+    // 2) Tenta via Native driver na coleção "HistoricoChat.config"
+    try {
+        if (dbHistoria) {
+            const nativeCfg = await dbHistoria.collection('config').findOne({ key: 'adminSecret' });
+            if (nativeCfg?.value) return nativeCfg.value;
+        }
+    } catch { }
+    return null;
+}
+
 // Middleware de proteção admin usando senha do banco
 async function requireAdminAuth(req, res, next) {
-    const provided = req.headers['authorization'];
+    const authHeader = req.headers['authorization'] || '';
     try {
-        const config = await Config.findOne({ key: 'adminSecret' });
-        const secret = config?.value;
-        if (!secret || provided !== secret) {
-            return res.status(403).json({ error: 'Acesso negado' });
+        const secret = await getAdminSecretFromConfig();
+        if (!secret) return res.status(403).json({ error: 'Acesso negado' });
+
+        // Aceita Bearer token ou legacy senha em texto
+        if (authHeader.startsWith('Bearer ')) {
+            const token = authHeader.slice('Bearer '.length);
+            const payload = verifyAdminToken(token, secret);
+            if (!payload) return res.status(403).json({ error: 'Acesso negado' });
+            req.admin = payload;
+            return next();
         }
-        next();
+        if (authHeader === secret) {
+            req.admin = { method: 'password' };
+            return next();
+        }
+        return res.status(403).json({ error: 'Acesso negado' });
     } catch (err) {
         return res.status(500).json({ error: 'Erro ao validar autenticação admin' });
     }
@@ -36,16 +200,41 @@ async function requireAdminAuth(req, res, next) {
 app.post('/api/admin/login', async (req, res) => {
     const { password } = req.body;
     try {
-        const config = await Config.findOne({ key: 'adminSecret' });
-        const secret = config?.value;
+        const secret = await getAdminSecretFromConfig();
         if (!secret || password !== secret) {
             return res.status(403).json({ error: 'Senha incorreta' });
         }
-        res.json({ success: true });
+        const token = signAdminToken({ iat: Date.now() }, secret, 60 * 60); // 1h
+        res.json({ success: true, token });
     } catch (err) {
         res.status(500).json({ error: 'Erro ao validar senha admin' });
     }
 });
+
+// Token HMAC simples (stateless)
+function signAdminToken(payload, secret, expiresInSec = 3600) {
+    const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
+    const exp = Math.floor(Date.now() / 1000) + expiresInSec;
+    const body = Buffer.from(JSON.stringify({ ...payload, exp })).toString('base64url');
+    const data = `${header}.${body}`;
+    const sig = crypto.createHmac('sha256', secret).update(data).digest('base64url');
+    return `${data}.${sig}`;
+}
+
+function verifyAdminToken(token, secret) {
+    try {
+        const [headerB64, bodyB64, sig] = token.split('.');
+        if (!headerB64 || !bodyB64 || !sig) return null;
+        const data = `${headerB64}.${bodyB64}`;
+        const expected = crypto.createHmac('sha256', secret).update(data).digest('base64url');
+        if (expected !== sig) return null;
+        const body = JSON.parse(Buffer.from(bodyB64, 'base64url').toString('utf8'));
+        if (typeof body.exp !== 'number' || body.exp < Math.floor(Date.now() / 1000)) return null;
+        return body;
+    } catch {
+        return null;
+    }
+}
 
 // Endpoint: GET /api/admin/stats
 app.get('/api/admin/stats', requireAdminAuth, async (req, res) => {
@@ -168,6 +357,11 @@ app.get('/api/status', (req, res) => {
         timestamp: new Date().toISOString(),
         ip: req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown'
     });
+});
+
+// Rota amigável para o painel admin
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
 // Endpoint para registrar acesso do bot no ranking
@@ -662,13 +856,46 @@ app.get('/api/chat/historicos/:sessionId', async (req, res) => {
 });
 
 // Endpoint de login
-app.post('/api/login', (req, res) => {
-    const { username, password } = req.body;
-    const user = USERS.find(u => u.username === username && u.password === password);
-    if (!user) {
-        return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
+app.post('/api/login', async (req, res) => {
+    try {
+        const { username, password } = req.body || {};
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Informe usuário e senha.' });
+        }
+
+        const uname = String(username).trim();
+        const pwd = String(password);
+
+        // Login de admin usa segredo do banco (Config ou HistoricoChat.config)
+        if (uname.toLowerCase() === 'admin') {
+            try {
+                const secret = await getAdminSecretFromConfig();
+                if (secret && pwd === secret) {
+                    return res.json({ user: { userId: 'admin', username: 'admin', isAdmin: true } });
+                }
+            } catch (e) {
+                console.error('Erro ao obter adminSecret:', e.message);
+            }
+            return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
+        }
+
+        // Demais usuários: valida lista em memória, e se vazia permite login efêmero
+        let user = USERS.find(u => u.username === uname && u.password === pwd);
+
+        if (!user && USERS.length === 0) {
+            // Cria usuário efêmero (apenas para filtro de históricos)
+            user = { userId: uname, username: uname, isAdmin: false };
+        }
+
+        if (!user) {
+            return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
+        }
+
+        return res.json({ user: { userId: user.userId || user.username, username: user.username, isAdmin: !!user.isAdmin } });
+    } catch (err) {
+        console.error('Erro no login:', err);
+        return res.status(500).json({ error: 'Erro interno no login.' });
     }
-    res.json({ user: { userId: user.userId, username: user.username, isAdmin: user.isAdmin } });
 });
 
 // Endpoint de históricos (GET) - filtra por userId, exceto admin
@@ -693,8 +920,17 @@ process.on('unhandledRejection', (error) => {
     console.error('Unhandled Rejection:', error);
 });
 
-// Start the server
-app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
-    console.log('Press Ctrl+C to stop the server');
-});
+// Helper de clima (stub simples)
+async function getWeather(city) {
+    return { location: city, temperature: 25, description: 'céu limpo' };
+}
+
+// Iniciar conexões e servidor
+(async () => {
+    await connectMongo();
+    await connectMongoose();
+    app.listen(PORT, () => {
+        console.log(`Server is running on port ${PORT}`);
+        console.log('Press Ctrl+C to stop the server');
+    });
+})();

@@ -1018,6 +1018,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (openHistoryBtn) {
         openHistoryBtn.addEventListener('click', toggleHistoryPanel);
     }
+    const openAdminBtn = document.getElementById('open-admin');
+    const openAdminSecondaryBtn = document.getElementById('open-admin-secondary');
+    function handleOpenAdmin() {
+        // Acesse diretamente o painel admin; login será feito lá
+        window.location.href = '/admin';
+    }
+    if (openAdminBtn) openAdminBtn.addEventListener('click', handleOpenAdmin);
+    if (openAdminSecondaryBtn) openAdminSecondaryBtn.addEventListener('click', handleOpenAdmin);
 });
 
 // =============== FUNCIONALIDADES DE LOGIN ===============
@@ -1054,8 +1062,8 @@ async function handleLogin(e) {
         const data = await res.json();
         currentUser = data.user; // { userId, username, isAdmin }
         hideLoginModal();
-        // Redireciona para página de todos históricos
-        window.location.href = 'all-history.html';
+    // Redireciona para o painel admin
+    window.location.href = '/admin';
     } catch (err) {
         errorDiv.textContent = 'Erro de conexão. Tente novamente.';
     }
@@ -1074,14 +1082,7 @@ function disableChatUI() {
 }
 
 
-// Exibe modal de login apenas ao clicar em 'Ver todos históricos'
-window.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('login-modal').style.display = 'none';
-    document.getElementById('see-all-history').addEventListener('click', () => {
-        showLoginModal();
-    });
-    document.getElementById('login-form').addEventListener('submit', handleLogin);
-});
+// Botões de acesso ao painel admin já redirecionam diretamente em handleOpenAdmin
 
 // Modifique loadHistoricos para enviar userId se necessário
 async function loadHistoricos() {
