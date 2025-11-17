@@ -89,6 +89,7 @@ ${climateText}`;
 // Endpoint principal do chat
 app.post('/api/chat', async (req, res) => {
     try {
+        console.log('Recebido /api/chat request body:', JSON.stringify(req.body).substring(0,1000));
         const { message, sessionId } = req.body || {};
         if (!message || !sessionId) {
             return res.status(400).json({ error: 'message e sessionId são obrigatórios' });
@@ -113,8 +114,27 @@ app.post('/api/chat', async (req, res) => {
         const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
         // Usar geração simples para reduzir falhas
         const prompt = `${systemInstruction}\n\nUsuário: ${message}`;
-        const result = await model.generateContent(prompt);
-        const responseText = result.response.text();
+
+        let responseText = '';
+        try {
+            const result = await model.generateContent(prompt);
+            // Compatibilidade com diferentes formatos de resposta
+            if (result && result.response && typeof result.response.text === 'function') {
+                responseText = result.response.text();
+            } else if (result && typeof result.text === 'string') {
+                responseText = result.text;
+            } else if (result && result.output && Array.isArray(result.output) && result.output[0] && result.output[0].content) {
+                // tentar montar texto a partir de chunks
+                responseText = result.output.map(o => JSON.stringify(o)).join('\n');
+            } else {
+                responseText = JSON.stringify(result);
+            }
+        } catch (aiErr) {
+            console.error('Erro ao gerar resposta com genAI (usando fallback):', aiErr);
+            if (aiErr && aiErr.stack) console.error(aiErr.stack);
+            // Fallback: retorna uma resposta simples para manter o chat funcionando
+            responseText = `Desculpe, o serviço de IA está indisponível no momento. Aqui vai uma resposta provisória baseada na sua mensagem: "${message}"`;
+        }
 
         // Atualiza histórico.
         history.push({ role: 'user', parts: [{ text: message }] });
@@ -123,7 +143,9 @@ app.post('/api/chat', async (req, res) => {
         res.json({ message: responseText });
     } catch (error) {
         console.error('Erro no endpoint /api/chat:', error);
-        res.status(500).json({ error: 'Erro interno do servidor' });
+        if (error && error.stack) console.error(error.stack);
+        // Return more useful error message for debugging (will be logged)
+        res.status(500).json({ error: 'Erro interno do servidor', details: error.message });
     }
 });
 
@@ -133,6 +155,70 @@ app.post('/api/clear-chat', (req, res) => {
     if (!sessionId) return res.status(400).json({ error: 'sessionId é obrigatório' });
     chatHistories.delete(sessionId);
     res.json({ success: true });
+});
+
+// Endpoint para salvar histórico de sessão (inserir/atualizar)
+app.post('/api/chat/salvar-historico', async (req, res) => {
+    try {
+        const session = req.body || {};
+        const { sessionId } = session;
+        if (!sessionId) return res.status(400).json({ error: 'sessionId é obrigatório' });
+
+        // Normalizar campos de data
+        if (session.startTime && typeof session.startTime === 'string') session.startTime = new Date(session.startTime);
+        if (session.endTime && typeof session.endTime === 'string') session.endTime = new Date(session.endTime);
+
+        // Tentar salvar no MongoDB primeiro
+        if (dbHistoria) {
+            try {
+                const collection = dbHistoria.collection('sessoesChat');
+                await collection.updateOne(
+                    { sessionId: sessionId },
+                    { $set: { ...session, loggedAt: new Date() } },
+                    { upsert: true }
+                );
+                console.log(`✅ Histórico salvo/upsert no MongoDB para sessão ${sessionId}`);
+                return res.json({ success: true, storage: 'mongodb' });
+            } catch (dbErr) {
+                console.error('❌ Erro ao salvar no MongoDB:', dbErr.message);
+                // continuar para fallback
+            }
+        }
+
+        // Fallback: salvar em arquivo local
+        const fs = require('fs');
+        const historicFile = path.join(__dirname, 'logs', 'historic_sessions.json');
+        let sessions = [];
+        try {
+            if (fs.existsSync(historicFile)) {
+                sessions = JSON.parse(fs.readFileSync(historicFile, 'utf8')) || [];
+            }
+        } catch (readErr) {
+            console.error('❌ Erro ao ler arquivo de histórico:', readErr.message);
+            sessions = [];
+        }
+
+        // Atualiza ou insere
+        const idx = sessions.findIndex(s => s.sessionId === sessionId);
+        const toSave = { ...session, loggedAt: new Date().toISOString() };
+        if (idx >= 0) {
+            sessions[idx] = toSave;
+        } else {
+            sessions.unshift(toSave);
+        }
+
+        try {
+            fs.writeFileSync(historicFile, JSON.stringify(sessions, null, 2));
+            console.log(`✅ Histórico salvo no arquivo local para sessão ${sessionId}`);
+            return res.json({ success: true, storage: 'local_file' });
+        } catch (writeErr) {
+            console.error('❌ Erro ao salvar arquivo local:', writeErr.message);
+            return res.status(500).json({ error: 'Erro ao salvar histórico' });
+        }
+    } catch (error) {
+        console.error('❌ Erro geral ao salvar histórico:', error);
+        return res.status(500).json({ error: 'Erro interno ao salvar histórico' });
+    }
 });
 
 // Mongoose models

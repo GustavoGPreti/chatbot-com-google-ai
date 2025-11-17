@@ -209,12 +209,15 @@ async function salvarHistoricoSessao() {
         });
 
         if (!response.ok) {
-            throw new Error(`Erro HTTP: ${response.status}`);
+            // Não interrompe o fluxo do chat se o salvamento falhar
+            let body = '';
+            try { body = await response.text(); } catch (e) { body = String(e); }
+            console.error('Falha ao salvar histórico (status', response.status + '):', body);
+            return null;
         }
 
         const result = await response.json();
         console.log('✅ Histórico salvo com sucesso:', result);
-        
         return result;
     } catch (error) {
         console.error('❌ Erro ao salvar histórico da sessão:', error);
@@ -303,7 +306,10 @@ async function sendMessage(userInput) {
         });
 
         if (!response.ok) {
-            throw new Error('Network response was not ok');
+            // Try to extract server error details
+            let bodyText = '';
+            try { bodyText = await response.text(); } catch (e) { bodyText = String(e); }
+            throw new Error(`HTTP ${response.status} - ${bodyText}`);
         }
 
         const data = await response.json();
