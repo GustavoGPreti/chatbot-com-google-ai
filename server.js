@@ -111,7 +111,7 @@ app.post('/api/chat', async (req, res) => {
         if (!chatHistories.has(sessionId)) chatHistories.set(sessionId, []);
         const history = chatHistories.get(sessionId);
 
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
         // Usar geração simples para reduzir falhas
         const prompt = `${systemInstruction}\n\nUsuário: ${message}`;
 
@@ -297,6 +297,41 @@ app.post('/api/admin/login', async (req, res) => {
     }
 });
 
+// Endpoint para verificar se existe adminSecret configurado
+app.get('/api/admin/exists', async (req, res) => {
+    try {
+        const secret = await getAdminSecretFromConfig();
+        res.json({ exists: !!secret });
+    } catch (err) {
+        res.status(500).json({ error: 'Erro ao verificar status admin' });
+    }
+});
+
+// Endpoint para criar/instalar adminSecret (apenas quando não existe)
+app.post('/api/admin/setup', async (req, res) => {
+    try {
+        const { password } = req.body || {};
+        if (!password || typeof password !== 'string' || password.length < 6) {
+            return res.status(400).json({ error: 'Senha inválida (mínimo 6 caracteres)' });
+        }
+        const existing = await getAdminSecretFromConfig();
+        if (existing) return res.status(409).json({ error: 'Admin já configurado' });
+
+        // Salvar no Config via Mongoose
+        // Use $set to avoid replacing the whole document on upsert
+        await Config.findOneAndUpdate(
+            { key: 'adminSecret' },
+            { $set: { value: password } },
+            { upsert: true }
+        );
+        console.log('✅ adminSecret criado via /api/admin/setup');
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Erro em /api/admin/setup:', err);
+        res.status(500).json({ error: 'Erro ao configurar admin' });
+    }
+});
+
 // Token HMAC simples (stateless)
 function signAdminToken(payload, secret, expiresInSec = 3600) {
     const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
@@ -325,6 +360,7 @@ function verifyAdminToken(token, secret) {
 // Endpoint: GET /api/admin/stats
 app.get('/api/admin/stats', requireAdminAuth, async (req, res) => {
     try {
+        console.log('[ADMIN] /api/admin/stats called by:', req.admin || 'unknown', 'authHeader:', req.headers['authorization']);
         const totalConversas = await Chat.countDocuments();
         const chats = await Chat.find({}, { messages: 1 }).lean();
         const totalMensagens = chats.reduce((acc, chat) => acc + (chat.messages?.length || 0), 0);
@@ -338,9 +374,11 @@ app.get('/api/admin/stats', requireAdminAuth, async (req, res) => {
 // Endpoint: GET /api/admin/system-instruction
 app.get('/api/admin/system-instruction', requireAdminAuth, async (req, res) => {
     try {
+        console.log('[ADMIN] GET /api/admin/system-instruction called by:', req.admin || 'unknown', 'authHeader:', req.headers['authorization']);
         const config = await Config.findOne({ key: 'systemInstruction' });
         res.json({ instruction: config?.value || '' });
     } catch (err) {
+        console.error('Erro ao buscar instrução:', err);
         res.status(500).json({ error: 'Erro ao buscar instrução' });
     }
 });
@@ -348,11 +386,12 @@ app.get('/api/admin/system-instruction', requireAdminAuth, async (req, res) => {
 // Endpoint: POST /api/admin/system-instruction
 app.post('/api/admin/system-instruction', requireAdminAuth, async (req, res) => {
     try {
+        console.log('[ADMIN] POST /api/admin/system-instruction called by:', req.admin || 'unknown');
         const { instruction } = req.body;
         if (!instruction) return res.status(400).json({ error: 'Instrução obrigatória' });
         await Config.findOneAndUpdate(
             { key: 'systemInstruction' },
-            { value: instruction },
+            { $set: { value: instruction } },
             { upsert: true }
         );
         res.json({ success: true });
@@ -503,8 +542,8 @@ app.get('/api/ranking/visualizar', (req, res) => {
     }
 });
 
-// NOVO ENDPOINT B2.P1.A8 - Visualizar histórico de sessões
-app.get('/api/chat/historico', async (req, res) => {
+// NOVO ENDPOINT B2.P1.A8 - Visualizar histórico de sessões (ADMIN ONLY)
+app.get('/api/chat/historico', requireAdminAuth, async (req, res) => {
     try {
         const { limit = 10, sessionId } = req.query;
 
@@ -578,8 +617,8 @@ app.get('/api/chat/historico', async (req, res) => {
     }
 });
 
-// Endpoint para deletar histórico
-app.delete('/api/chat/historicos/:sessionId', async (req, res) => {
+// Endpoint para deletar histórico (ADMIN ONLY)
+app.delete('/api/chat/historicos/:sessionId', requireAdminAuth, async (req, res) => {
     try {
         const { sessionId } = req.params;
 
@@ -636,8 +675,8 @@ app.delete('/api/chat/historicos/:sessionId', async (req, res) => {
     }
 });
 
-// Endpoint para gerar título sugerido
-app.get('/api/chat/historicos/:sessionId/gerar-titulo', async (req, res) => {
+// Endpoint para gerar título sugerido (ADMIN ONLY)
+app.get('/api/chat/historicos/:sessionId/gerar-titulo', requireAdminAuth, async (req, res) => {
     try {
         const { sessionId } = req.params;
 
@@ -664,7 +703,7 @@ app.get('/api/chat/historicos/:sessionId/gerar-titulo', async (req, res) => {
         }
 
         // Gerar prompt para o Gemini
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
         const primeiraMensagem = session.messages[0].parts[0].text;
         const ultimaMensagem = session.messages[session.messages.length - 1].parts[0].text;
@@ -697,8 +736,8 @@ app.get('/api/chat/historicos/:sessionId/gerar-titulo', async (req, res) => {
     }
 });
 
-// Endpoint para atualizar título
-app.put('/api/chat/historicos/:sessionId/atualizar-titulo', async (req, res) => {
+// Endpoint para atualizar título (ADMIN ONLY)
+app.put('/api/chat/historicos/:sessionId/atualizar-titulo', requireAdminAuth, async (req, res) => {
     try {
         const { sessionId } = req.params;
         const { titulo } = req.body;
@@ -763,8 +802,8 @@ app.put('/api/chat/historicos/:sessionId/atualizar-titulo', async (req, res) => 
     }
 });
 
-// NOVO ENDPOINT - Listar históricos de conversas (CRUD READ)
-app.get('/api/chat/historicos', async (req, res) => {
+// NOVO ENDPOINT - Listar históricos de conversas (CRUD READ) (ADMIN ONLY)
+app.get('/api/chat/historicos', requireAdminAuth, async (req, res) => {
     try {
         const { limit = 10, sortBy = 'startTime', order = 'desc' } = req.query;
 
@@ -874,8 +913,8 @@ app.get('/api/chat/historicos', async (req, res) => {
     }
 });
 
-// NOVO ENDPOINT - Obter detalhes de uma conversa específica
-app.get('/api/chat/historicos/:sessionId', async (req, res) => {
+// NOVO ENDPOINT - Obter detalhes de uma conversa específica (ADMIN ONLY)
+app.get('/api/chat/historicos/:sessionId', requireAdminAuth, async (req, res) => {
     try {
         const { sessionId } = req.params;
 
@@ -984,18 +1023,12 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// Endpoint de históricos (GET) - filtra por userId, exceto admin
-app.get('/api/chat/historicos', (req, res) => {
-    let historicos = [];
-    try {
-        historicos = JSON.parse(fs.readFileSync(path.join(__dirname, 'logs', 'connection_logs.json')));
-    } catch (e) { }
-    const { userId } = req.query;
-    if (userId && userId !== 'admin') {
-        historicos = historicos.filter(h => h.userId === userId);
-    }
-    res.json(historicos);
-});
+// NOTE: rota antiga de históricos de conexão removida para evitar conflito
+// A rota original que fornece históricos de conversa está definida acima
+// em /api/chat/historicos (implementação completa que busca no MongoDB
+// ou em arquivo local). Removemos o handler duplicado que retornava
+// connection_logs.json porque sobrescrevia a rota e causava retorno
+// de dados em formato diferente do esperado pelo painel admin.
 
 // Handle errors globally
 process.on('uncaughtException', (error) => {

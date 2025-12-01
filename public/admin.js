@@ -22,51 +22,113 @@ window.onload = () => {
     }
     tabButtons.forEach(b => b.addEventListener('click', () => setActiveTab(b.dataset.tab)));
 
-    // Login
-    loginBtn.onclick = async () => {
-        const uname = (document.getElementById('admin-username')?.value || '').trim();
-        const pwd = document.getElementById('admin-password').value;
-        document.getElementById('login-error').innerText = '';
-        if (!uname || !pwd) {
-            document.getElementById('login-error').innerText = 'Informe usuário e senha.';
-            return;
-        }
+    // Login / Setup flow
+    async function showSetupOrLogin() {
         try {
-            // Primeiro, valida como no histórico
-            const resLogin = await fetch('/api/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: uname, password: pwd })
-            });
-            if (!resLogin.ok) {
-                const data = await resLogin.json().catch(() => ({}));
-                document.getElementById('login-error').innerText = data.error || 'Usuário ou senha inválidos.';
+            const res = await fetch('/api/admin/exists');
+            if (!res.ok) {
+                console.error('Não foi possível verificar status admin');
                 return;
             }
-            const dataLogin = await resLogin.json();
-            // Se for admin, pegar token do painel
-            if (uname.toLowerCase() === 'admin') {
-                const resAdmin = await fetch('/api/admin/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ password: pwd })
-                });
-                if (!resAdmin.ok) {
-                    document.getElementById('login-error').innerText = 'Erro ao autenticar admin.';
-                    return;
-                }
-                const dataAdmin = await resAdmin.json();
-                adminToken = dataAdmin.token || '';
+            const body = await res.json();
+            const exists = !!body.exists;
+            const loginTitle = document.querySelector('#login-container h2') || null;
+            if (!exists) {
+                // Ajusta UI para setup (criar senha admin)
+                if (loginTitle) loginTitle.innerText = 'Configurar administrador (primeiro uso)';
+                document.getElementById('admin-username').value = 'admin';
+                document.getElementById('admin-username').disabled = true;
+                document.getElementById('admin-password').placeholder = 'Escolha uma senha (mín 6 caracteres)';
+                loginBtn.innerText = 'Criar Admin';
+                loginBtn.onclick = async () => {
+                    const pwd = document.getElementById('admin-password').value;
+                    document.getElementById('login-error').style.display = 'none';
+                    if (!pwd || pwd.length < 6) {
+                        document.getElementById('login-error').innerText = 'Senha muito curta (mín 6 caracteres).';
+                        document.getElementById('login-error').style.display = 'block';
+                        return;
+                    }
+                    try {
+                        const r = await fetch('/api/admin/setup', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ password: pwd })
+                        });
+                        if (!r.ok) {
+                            const err = await r.json().catch(() => ({}));
+                            document.getElementById('login-error').innerText = err.error || 'Erro ao criar admin.';
+                            document.getElementById('login-error').style.display = 'block';
+                            return;
+                        }
+                        alert('Administrador criado com sucesso. Faça login agora.');
+                        // reload to switch to login mode
+                        window.location.reload();
+                    } catch (e) {
+                        document.getElementById('login-error').innerText = 'Erro de conexão';
+                        document.getElementById('login-error').style.display = 'block';
+                    }
+                };
+            } else {
+                // Normal login
+                if (loginTitle) loginTitle.innerText = 'Login Administrador';
+                document.getElementById('admin-username').disabled = false;
+                document.getElementById('admin-password').placeholder = 'Senha';
+                loginBtn.innerText = 'Entrar';
+                loginBtn.onclick = async () => {
+                    const uname = (document.getElementById('admin-username')?.value || '').trim();
+                    const pwd = document.getElementById('admin-password').value;
+                    document.getElementById('login-error').style.display = 'none';
+                    if (!uname || !pwd) {
+                        document.getElementById('login-error').innerText = 'Informe usuário e senha.';
+                        document.getElementById('login-error').style.display = 'block';
+                        return;
+                    }
+                    try {
+                        if (uname.toLowerCase() === 'admin') {
+                            const resAdmin = await fetch('/api/admin/login', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ password: pwd })
+                            });
+                            if (!resAdmin.ok) {
+                                const data = await resAdmin.json().catch(() => ({}));
+                                document.getElementById('login-error').innerText = data.error || 'Erro ao autenticar admin.';
+                                document.getElementById('login-error').style.display = 'block';
+                                return;
+                            }
+                            const dt = await resAdmin.json();
+                            adminToken = dt.token || '';
+                        } else {
+                            // fallback to legacy user login for non-admin
+                            const resLogin = await fetch('/api/login', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ username: uname, password: pwd })
+                            });
+                            if (!resLogin.ok) {
+                                const data = await resLogin.json().catch(() => ({}));
+                                document.getElementById('login-error').innerText = data.error || 'Usuário ou senha inválidos.';
+                                document.getElementById('login-error').style.display = 'block';
+                                return;
+                            }
+                        }
+
+                        document.getElementById('login-container').style.display = 'none';
+                        document.getElementById('admin-panel').style.display = 'block';
+                        setActiveTab('dashboard');
+                    } catch (err) {
+                        document.getElementById('login-error').innerText = 'Erro de conexão com o servidor.';
+                        document.getElementById('login-error').style.display = 'block';
+                        console.error('Erro de rede:', err);
+                    }
+                };
             }
-            adminSecret = pwd; // fallback legacy
-            document.getElementById('login-container').style.display = 'none';
-            document.getElementById('admin-panel').style.display = 'block';
-            setActiveTab('dashboard');
         } catch (err) {
-            document.getElementById('login-error').innerText = 'Erro de conexão com o servidor.';
-            console.error('Erro de rede:', err);
+            console.error('Erro verificando setup admin:', err);
         }
-    };
+    }
+
+    showSetupOrLogin();
 
     logoutBtn.onclick = () => {
         adminSecret = '';
@@ -174,7 +236,11 @@ window.onload = () => {
             limit: histLimit.value
         });
         try {
-            const res = await fetch(`/api/chat/historicos?${params.toString()}`);
+            const res = await fetch(`/api/chat/historicos?${params.toString()}`, {
+                headers: {
+                    'authorization': adminToken ? `Bearer ${adminToken}` : adminSecret
+                }
+            });
             if (!res.ok) {
                 historicosBody.innerHTML = '<tr><td colspan="7">Erro ao carregar</td></tr>';
                 return;
@@ -207,7 +273,11 @@ window.onload = () => {
         histDetail.style.display = 'block';
         histDetail.innerHTML = 'Carregando detalhes...';
         try {
-            const res = await fetch(`/api/chat/historicos/${encodeURIComponent(sessionId)}`);
+            const res = await fetch(`/api/chat/historicos/${encodeURIComponent(sessionId)}`, {
+                headers: {
+                    'authorization': adminToken ? `Bearer ${adminToken}` : adminSecret
+                }
+            });
             if (!res.ok) { histDetail.innerHTML = 'Erro ao carregar detalhes'; return; }
             const data = await res.json();
             const s = data.session;
@@ -222,7 +292,11 @@ window.onload = () => {
 
     async function gerarTitulo(sessionId) {
         try {
-            const res = await fetch(`/api/chat/historicos/${encodeURIComponent(sessionId)}/gerar-titulo`);
+            const res = await fetch(`/api/chat/historicos/${encodeURIComponent(sessionId)}/gerar-titulo`, {
+                headers: {
+                    'authorization': adminToken ? `Bearer ${adminToken}` : adminSecret
+                }
+            });
             if (!res.ok) { alert('Erro ao gerar título'); return; }
             const data = await res.json();
             alert(`Título sugerido: ${data.tituloSugerido}`);
@@ -234,7 +308,12 @@ window.onload = () => {
     async function excluirHistorico(sessionId) {
         if (!confirm('Tem certeza que deseja excluir este histórico?')) return;
         try {
-            const res = await fetch(`/api/chat/historicos/${encodeURIComponent(sessionId)}`, { method: 'DELETE' });
+            const res = await fetch(`/api/chat/historicos/${encodeURIComponent(sessionId)}`, {
+                method: 'DELETE',
+                headers: {
+                    'authorization': adminToken ? `Bearer ${adminToken}` : adminSecret
+                }
+            });
             if (!res.ok) { alert('Erro ao excluir'); return; }
             loadHistoricos();
             histDetail.style.display = 'none';
@@ -255,4 +334,7 @@ window.onload = () => {
         });
     }
     if (histReload) histReload.addEventListener('click', loadHistoricos);
+
+    // Inicializa painel na aba dashboard após login
+    // (já garantido no fluxo de login)
 };
